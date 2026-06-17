@@ -83,3 +83,7 @@ Device ID,Rollback Timer (sec),System IP,Host Name,Site Id,Dual Stack IPv6 Defau
 ```
 
 Alternatively, you can get a CSV by navigating to a configuration group in SD-WAN Manager's GUI, selecting the 3 dots next to the configuration group name, and selecting "Export". As long as there are some devices deployed, it will give you an idea of the example CSV format.
+
+
+## TODO
+- [ ] add option at the end of the deployment stage to associate & deploy routers to a policy group
