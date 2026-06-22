@@ -209,7 +209,7 @@ def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
     var_devices = []
     for d in devices_payload:
         # Sanitize keys: Only supply variables that the Configuration Group template is explicitly looking for
-        sanitized_vars = {}
+        sanitized_vars_list = []
         for k, v in d["variables"].items():
             if k in ["raw_row"]: # this is for internal diagnostic only
                 continue
@@ -221,12 +221,12 @@ def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
             # Enforce matching verification with the controller schema expectations
             if expected_vars and normalized_key in expected_vars:
                 if v is not None and str(v).strip() != "":
-                    sanitized_vars[normalized_key] = v
+                    sanitized_vars_list.append({"name": normalized_key, "value": v})
 
         # Nest the configuration parameters safely inside a "variables" dictionary
         var_devices.append({
             "device-id": d["deviceId"],
-            "variables": sanitized_vars
+            "variables": sanitized_vars_list
         })
         
     # Include mandatory global solution parameter key
