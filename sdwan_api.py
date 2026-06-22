@@ -133,7 +133,6 @@ def _get_expected_variables(session, base_url, group_id):
         res = session.get(url, timeout=30)
         if res.status_code == 200:
             data = res.json()
-            # Extract the active variable name keys directly from the associated device array
             expected_names = set()
             for device in data.get("devices", []):
                 for variable in device.get("variables", []):
@@ -153,14 +152,9 @@ def _get_expected_variables(session, base_url, group_id):
             print(f"🔍 --- EXCEPTION RAW CONTEXT --- \n{res.text}\n----------------------------------")
     return set()
 
-def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
-    """Binds devices, filters variables to match the schema definitions, and deploys the group."""
-    # -------------------------------------------------------------------------
-    # STEP 1: Associate devices with Configuration Group (DevNet 26.1 Schema Fix)
-    # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/
-    # -------------------------------------------------------------------------
+def associate_devices(session, base_url, group_id, devices_payload):
+    """STEP 4: Handles standalone group binding and structural association verification."""
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
-     
     assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
     payload = {"devices": assoc_devices}
     
@@ -169,12 +163,11 @@ def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
         res.raise_for_status()
         print("⏳ Association request accepted. Polling official association table to confirm database replication...")
         
-        # Explicit Association Verification Polling Loop
         target_ids = {d["deviceId"] for d in devices_payload}
         verified = False
         check_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
         
-        for attempt in range(12):  # Poll up to 60 seconds (12 * 5s)
+        for attempt in range(12):  
             time.sleep(5)
             try:
                 check_res = session.get(check_url, timeout=10)
@@ -188,52 +181,90 @@ def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
                         break
             except Exception:
                 pass
-            print(f"⏳ Verification attempt {attempt + 1}/12: Devices missing from association table. Retrying...")
+            print(f"⏳ Verification attempt {attempt + 1}/12: Sync pending in database roster. Retrying...")
             
-        if not verified:
-            print("❌ Failure: Devices failed to reflect association within the 60-second execution window.")
-            return None
+        return verified
             
     except Exception as e:
         print(f"❌ Structural layout binding rejected: {e}")
         if 'res' in locals() and hasattr(res, 'text') and res.text:
             print(f"🔍 --- CONTROLLER REJECTION DETAILS --- \n{res.text}\n----------------------------------")
-        return None
+        return False
 
-    # Step 2: Associate individual device template configuration variables
-    # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/
+def deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=None):
+    """
+    STEP 6: Handles type translation formatting and initiates full deployment push task.
+    Incorporates persistent local JSON custom column-to-schema field mappings.
+    """
+    custom_mappings = custom_mappings or {}
     expected_vars = _get_expected_variables(session, base_url, group_id)
     if expected_vars:
         print(f"📋 Configuration Group schema requires variables: {list(expected_vars)}")
+        
     var_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/variables"
     var_devices = []
+    
+    # Invert custom mappings for rapid schema key identification during CSV processing
+    # Key = CSV header name, Value = Expected template schema key
+    csv_to_schema_map = {csv_col: schema_var for schema_var, csv_col in custom_mappings.items()}
+
     for d in devices_payload:
-        # Sanitize keys: Only supply variables that the Configuration Group template is explicitly looking for
         sanitized_vars_list = []
         for k, v in d["variables"].items():
-            if k in ["raw_row"]: # this is for internal diagnostic only
+            if k in ["raw_row"]:
                 continue
-            # Normalize CSV header key styles (e.g. "System IP" -> "system_ip", "Rollback Timer (sec)" -> "pseudo_commit_timer")
-            normalized_key = k.lower().replace(" ", "_").replace("(", "").replace(")", "")
-            if "rollback_timer" in normalized_key:
-                normalized_key = "pseudo_commit_timer"
+                
+            val_str = str(v).strip()
+            if v is None or val_str == "":
+                continue
 
-            # Enforce matching verification with the controller schema expectations
-            if expected_vars and normalized_key in expected_vars:
-                if v is not None and str(v).strip() != "":
-                    sanitized_vars_list.append({"name": normalized_key, "value": v})
+            matched_key = None
+            # Check custom interactive mappings override list first
+            if k in csv_to_schema_map and csv_to_schema_map[k] in expected_vars:
+                matched_key = csv_to_schema_map[k]
+            elif k in expected_vars:
+                matched_key = k
+            else:
+                variants = [
+                    k.lower().replace(" ", "_").replace("(", "").replace(")", ""),
+                    k.lower().replace(" ", "-").replace("(", "").replace(")", ""),
+                    "pseudo_commit_timer" if "Rollback Timer" in k else None
+                ]
+                for candidate in variants:
+                    if candidate in expected_vars:
+                        matched_key = candidate
+                        break
 
-        # Nest the configuration parameters safely inside a "variables" dictionary
+            if matched_key:
+                typed_value = val_str
+                if val_str.lower() in ["true", "false"]:
+                    typed_value = (val_str.lower() == "true")
+                elif "," in val_str or matched_key in ["vpn1_svi1_dhcp_dns_servers", "vpn1_svi1_dhcp_exclude_range", "dhcp-server_dnsServers"]:
+                    typed_value = [item.strip() for item in val_str.split(",") if item.strip()]
+                # 👇 FIX: Treat specific configuration variables strictly as strings even if numeric
+                elif matched_key in ["basic_consoleBaudRate", "consoleBaudRate"]:
+                    typed_value = val_str
+                else:
+                    try:
+                        if "." in val_str:
+                            typed_value = float(val_str)
+                        else:
+                            typed_value = int(val_str)
+                    except ValueError:
+                        typed_value = val_str
+
+                sanitized_vars_list.append({"name": matched_key, "value": typed_value})
+
         var_devices.append({
             "device-id": d["deviceId"],
             "variables": sanitized_vars_list
         })
         
-    # Include mandatory global solution parameter key
     var_payload = {
         "solution": "sdwan",
         "devices": var_devices
     }
+    
     try:
         res = session.put(var_url, json=var_payload, timeout=15)
         res.raise_for_status()
@@ -244,23 +275,29 @@ def associate_and_deploy_devices(session, base_url, group_id, devices_payload):
             print("\n🔍 --- SD-WAN MANAGER SERVER ERROR DETAILS ---")
             print(res.text)
             print("-----------------------------------------------\n")
-        print("--------- var payload --------------")
-        print(var_payload)
-        print("----------------------------------------")
-        print("----------devices payload---------------")
-        print(devices_payload)
-        print("----------------------------------------")
+        print(f"{var_payload=}")
         return None
 
-    # Step 3: Trigger the full Configuration Group orchestration deployment
-    # https://developer.cisco.com/docs/sd-wan/26-1/deploy-config-group/
-    deploy_url = f"{base_url}/dataservice/v1/config-group/{group_id}/deploy"
+    # https://developer.cisco.com/docs/sdwan/deploy-config-group/
+    deploy_url = f"{base_url}/dataservice/v1/config-group/device/deploy"
+    
+    # The payload requires matching the target devices and specifying the configGroupId
+    deploy_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/deploy"
+    
+    # Structure payload with target devices list
+    assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
+    deploy_payload = {
+        "devices": assoc_devices
+    }
+    
     try:
-        res = session.post(deploy_url, json=payload, timeout=20)
+        res = session.post(deploy_url, json=deploy_payload, timeout=20)
         res.raise_for_status()
         return res.json().get("parentTaskId")
     except Exception as e:
         print(f"❌ Configuration deployment trigger failed: {e}")
+        if 'res' in locals() and hasattr(res, 'text') and res.text:
+            print(f"🔍 --- CONTROLLER RESPONSE RAW TEXT --- \n{res.text}\n-------------------------")
     return None
 
 def poll_task_status(session, base_url, task_id):
@@ -280,27 +317,10 @@ def poll_task_status(session, base_url, task_id):
     return False, "Deployment polling action timed out."
 
 def associate_policy_group(session, base_url, policy_group_id, device_ids):
-    """
-    Associates a list of device UUIDs with a specific Policy Group.
-    
-    :param session: Authenticated requests.Session object
-    :param base_url: Base URL of your SD-WAN Manager (e.g., https://vmanage-ip)
-    :param policy_group_id: The UUID of the target Policy Group
-    :param device_ids: List of device UUIDs to associate
-    """
+    """Associates a list of device UUIDs with a specific Policy Group."""
     url = f"{base_url}/dataservice/v1/config-group/policy-group/{policy_group_id}/associate"
-    
-    # Structure payload according to Cisco's API Docs
-    payload = {
-        "devices": [
-            {"id": device_id} for device_id in device_ids
-        ]
-    }
-    
-    headers = {
-        'Content-Type': 'application/json'
-    }
-    
+    payload = {"devices": [{"id": device_id} for device_id in device_ids]}
+    headers = {'Content-Type': 'application/json'}
     try:
         response = session.post(url, json=payload, headers=headers, verify=False)
         response.raise_for_status()
@@ -313,37 +333,17 @@ def associate_policy_group(session, base_url, policy_group_id, device_ids):
         return None
     
 def deploy_policy_group(session, base_url, policy_group_id, device_ids):
-    """
-    Deploys the Policy Group for the associated devices.
-    
-    :param session: Authenticated requests.Session object
-    :param base_url: Base URL of your SD-WAN Manager
-    :param policy_group_id: The UUID of the target Policy Group
-    :param device_ids: List of device UUIDs included in this deployment
-    """
+    """Deploys the Policy Group for the associated devices."""
     url = f"{base_url}/dataservice/v1/config-group/policy-group/{policy_group_id}/deploy"
-    
-    # Payload maps the targeted devices to the action
-    payload = {
-        "devices": [
-            {"id": device_id} for device_id in device_ids
-        ]
-    }
-    
-    headers = {
-        'Content-Type': 'application/json'
-    }
-    
+    payload = {"devices": [{"id": device_id} for device_id in device_ids]}
+    headers = {'Content-Type': 'application/json'}
     try:
         response = session.post(url, json=payload, headers=headers, verify=False)
         response.raise_for_status()
-        
-        # This will return a dictionary containing the 'parentTaskId'
         task_info = response.json()
         task_id = task_info.get("parentTaskId")
         print(f"Deployment triggered successfully. Task ID: {task_id}")
         return task_id
-        
     except Exception as e:
         print(f"Error deploying Policy Group: {e}")
         if 'response' in locals() and response.text:
