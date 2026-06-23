@@ -451,4 +451,8 @@ def main():
     SDWANShell(session, base_url).cmdloop()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n👋 Terminating operations processes. Goodbye.")
+        sys.exit(0)
