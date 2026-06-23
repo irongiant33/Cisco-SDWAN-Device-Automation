@@ -432,6 +432,12 @@ class SDWANShell(cmd.Cmd):
         policy_input = args[1] if len(args) > 1 else None
         run_policy_deployment_pipeline(self.session, self.base_url, csv_path, policy_input)
 
+    def do_clear(self, arg):
+        """Clear the terminal output.
+        Usage: clear
+        """
+        os.system('cls' if os.name == 'nt' else 'clear')
+
     def do_exit(self, arg):
         """Exit the interactive shell.
         Usage: exit
