@@ -96,3 +96,24 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 - [x] just add a prompt for the user to ask whether to stop or skip and move on to the next step
 - [x] add ability to up arrow and run old configuration options
 - [x] Get JWT to work right. It seems to ask for my password every 2nd run of the script no matter what, but it should be time-based and I shouldn't need to enter password if I have a refresh key local
+
+---
+
+## 📚 Cisco Catalyst SD-WAN API References
+
+The following Cisco Catalyst SD-WAN developer documentation and endpoints are referenced and utilized within this codebase:
+
+| Component / Action | HTTP Method | API Endpoint | Documentation Link |
+| :--- | :--- | :--- | :--- |
+| **Authentication & Tokens** | POST | `/jwt/login` & `/jwt/refresh` | [API Docs](https://developer.cisco.com/docs/sdwan/authentication/#authentication) |
+| **Device Inventory** | GET | `/dataservice/device` | [API Docs](https://developer.cisco.com/docs/sdwan/getting-started/#get-the-list-of-devices) |
+| **Get Configuration Groups** | GET | `/dataservice/v1/config-group` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-by-solution/) |
+| **Get Policy Groups** | GET | `/dataservice/v1/policy-group` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-policy-group-by-solution/) |
+| **Get Group Expected Variables** | GET | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-device-variables/) |
+| **Associate Config Group** | POST | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/) |
+| **Dissociate Config Group** | DELETE | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/delete-config-group-association/) |
+| **Create Device Variables** | POST | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/) |
+| **Deploy Config Group** | POST | `/dataservice/v1/config-group/{groupId}/device/deploy` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-config-group/) |
+| **Poll Task Status** | GET | `/dataservice/device/action/status/{taskId}` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/find-status/) |
+| **Associate Policy Group** | POST | `/dataservice/v1/policy-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-policy-group-association/) |
+| **Deploy Policy Group** | POST | `/dataservice/v1/policy-group/{groupId}/device/deploy` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-policy-group/) |
