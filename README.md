@@ -86,7 +86,7 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 
 
 ## TODO
-- [ ] add option at the end of the deployment stage to associate & deploy routers to a policy group
+- [x] add option at the end of the deployment stage to associate & deploy routers to a policy group
 - [ ] Sometimes I receive the error "Configuration Group matching name 'ITS_Demo_1101' not discovered on environment." even though the configuration group definitely exists. I've found that running option 3 to fetch all config groups and then re-running this gets rid of the error, but I should figure out why this error exists.
 - [ ] I should handle this error more gracefully because it is not really an error since the device already exists: ❌ Configuration Group association payload rejected (HTTP 400): {"error":{"message":"Config Group Association error","code":"CFGRP0018","details":"GenericGroup-ASSOCIATION validation : Device(s) already associated to group(s), device(s)-group(s): {IR1101-K9-FVH3002L7U6=ITS_Demo_1101}","type":"error"}}
 ❌ Automation failed to initialize transactions on controller framework layer.

@@ -24,7 +24,6 @@ from sdwan_api import (
 MAPPINGS_FILE = "schema_mappings.json"
 
 def load_local_mappings():
-    """Reads persistent custom schema alignment structures from disk storage."""
     if os.path.exists(MAPPINGS_FILE):
         try:
             with open(MAPPINGS_FILE, 'r', encoding='utf-8') as f:
@@ -34,7 +33,6 @@ def load_local_mappings():
     return {}
 
 def save_local_mappings(mappings):
-    """Writes custom alignment structures persistently back to a local JSON layer."""
     try:
         with open(MAPPINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(mappings, f, indent=4)
@@ -42,7 +40,6 @@ def save_local_mappings(mappings):
         print(f"⚠️ Warning: Could not save layout schema mappings: {e}")
 
 def test_connectivity(session, base_url):
-    """CLI Option 1: Live connection diagnostics."""
     print("\n🔄 Interrogating node statistics from inventory directory matrix...")
     try:
         devices = fetch_devices(session, base_url)
@@ -53,7 +50,6 @@ def test_connectivity(session, base_url):
         print(f"❌ Exception caught during diagnostic token validation: {e}")
 
 def show_config_groups(session, base_url):
-    """CLI Option 2: Fetches and cleanly outputs all Configuration Groups."""
     print("\n📂 Fetching Configuration Groups list matrix from SD-WAN Manager...")
     try:
         groups = fetch_config_groups(session, base_url)
@@ -73,7 +69,6 @@ def show_config_groups(session, base_url):
         print(f"❌ Failed to parse configuration groups array: {e}")
 
 def show_policy_groups(session, base_url):
-    """CLI Option 3: Fetches and cleanly outputs all Policy Groups."""
     print("\n📂 Fetching Policy Groups matrix layer from SD-WAN Manager...")
     try:
         groups = fetch_policy_groups(session, base_url)
@@ -92,7 +87,6 @@ def show_policy_groups(session, base_url):
         print(f"❌ Failed to parse policy groups directory array: {e}")
 
 def load_manifest_csv():
-    """Shared Helper: Loads local target layout configuration files into active python environments."""
     csv_path = input("\n📂 Enter path to your Router Manifest CSV file (e.g., routers.csv): ").strip()
     try:
         with open(csv_path, mode='r', encoding='utf-8-sig') as f:
@@ -120,7 +114,6 @@ def load_manifest_csv():
     return devices_payload, headers, os.path.basename(csv_path)
 
 def run_association_pipeline(session, base_url):
-    """CLI Option 4: Structural layout group registration."""
     res = load_manifest_csv()
     if not res or not res[0]:
         return
@@ -139,12 +132,12 @@ def run_association_pipeline(session, base_url):
 def test_fetch_expected_variables(session, base_url):
     """
     CLI Option 5: Audits expected template variables against CSV columns.
-    Guides user step-by-step through any anomalies and logs resolutions to local JSON storage.
+    Saves alignment resolutions and outputs a custom layout mapping overview block.
     """
     res = load_manifest_csv()
     if not res or not res[0]:
         return
-    _, csv_headers, csv_filename = res
+    devices_payload, csv_headers, csv_filename = res
 
     target_input = input("🏷️ Enter Configuration Group Name or UUID: ").strip()
     if not target_input:
@@ -158,16 +151,14 @@ def test_fetch_expected_variables(session, base_url):
         print("ℹ️ No expected variables found, or Configuration Group ID is invalid.")
         return
 
-    print(f"\n✅ Successfully retrieved {len(expected_vars)} schema variables. Initiating alignment check...")
+    print(f"\n✅ Successfully retrieved {len(expected_vars)} schema variables. Checking layout maps...")
     
-    # Analyze automatic formatting styles match variants
     missing_vars = []
     for var in sorted(expected_vars):
         matched = False
         if var in csv_headers:
             matched = True
         else:
-            # Check internal naming translation conventions
             for header in csv_headers:
                 normalized_header = header.lower().replace(" ", "_").replace("(", "").replace(")", "")
                 if "rollback_timer" in normalized_header:
@@ -178,47 +169,82 @@ def test_fetch_expected_variables(session, base_url):
         if not matched:
             missing_vars.append(var)
 
-    if not missing_vars:
-        print("🎉 Perfect Alignment! All expected template parameters automatically map cleanly to your CSV headers.")
-        return
-
-    print(f"\n⚠️ Schema Gap Detected! The following {len(missing_vars)} target template variable(s) were not found in the CSV:")
-    for mv in missing_vars:
-        print(f"  - {mv}")
-
-    print("\n⏱️ Entering Interactive Schema Alignment Wizard...")
-    print("For each target field, select the corresponding source index column number from your CSV file.")
-    
-    # Present option columns array grid index lists
-    columns_list = list(csv_headers)
     all_saved_mappings = load_local_mappings()
     csv_specific_mapping = all_saved_mappings.get(csv_filename, {})
 
-    for idx, col in enumerate(columns_list, 1):
-        print(f" [{idx}] {col}")
-    print(" [S] Skip mapping this specific field")
+    if missing_vars:
+        print(f"\n⚠️ Schema Gap Detected! {len(missing_vars)} target template variable(s) were not found in the CSV.")
+        columns_list = list(csv_headers)
+        for idx, col in enumerate(columns_list, 1):
+            print(f" [{idx}] {col}")
+        print(" [S] Skip mapping this specific field")
 
-    for missing_var in missing_vars:
-        while True:
-            choice = input(f"\n👉 Which CSV column maps to expected schema variable '{missing_var}'? (1-{len(columns_list)} / S): ").strip()
-            if choice.lower() == 's':
-                print(f"⏭️ Skipping alignment resolution for variable: {missing_var}")
-                break
-            if choice.isdigit():
-                c_idx = int(choice)
-                if 1 <= c_idx <= len(columns_list):
-                    mapped_column_name = columns_list[c_idx - 1]
-                    csv_specific_mapping[missing_var] = mapped_column_name
-                    print(f"✅ Mapped: '{missing_var}' <--- CSV Column: '{mapped_column_name}'")
+        for missing_var in missing_vars:
+            while True:
+                choice = input(f"\n👉 Which CSV column maps to expected schema variable '{missing_var}'? (1-{len(columns_list)} / S): ").strip()
+                if choice.lower() == 's':
                     break
-            print("⚠️ Invalid entry. Choose a column digit or 'S' to skip.")
+                if choice.isdigit():
+                    c_idx = int(choice)
+                    if 1 <= c_idx <= len(columns_list):
+                        mapped_column_name = columns_list[c_idx - 1]
+                        csv_specific_mapping[missing_var] = mapped_column_name
+                        print(f"✅ Mapped: '{missing_var}' <--- CSV Column: '{mapped_column_name}'")
+                        break
+                print("⚠️ Invalid entry. Choose a column digit or 'S'.")
 
-    all_saved_mappings[csv_filename] = csv_specific_mapping
-    save_local_mappings(all_saved_mappings)
-    print(f"\n💾 Variable mapping schemas stored successfully under reference index context: '{csv_filename}'")
+        all_saved_mappings[csv_filename] = csv_specific_mapping
+        save_local_mappings(all_saved_mappings)
+
+    # Invert custom mappings for rapid lookup identification
+    csv_to_schema_map = {csv_col: schema_var for schema_var, csv_col in csv_specific_mapping.items()}
+
+    # --- PRINT FULL DEPLOYMENT PREVIEW MAPPING LAYOUT ---
+    print("\n" + "="*75)
+    print(f"📊 LIVE VARIABLE MAPPING SUMMARY PREVIEW")
+    print("="*75)
+    
+    sample_node = devices_payload[0]
+    sample_vars = sample_node['variables']
+    
+    # Print leading reference key
+    print(f"Device ID: {sample_node['deviceId']}")
+
+    for idx, var in enumerate(sorted(expected_vars), 2):
+        matched_csv_header = "❌ NOT MAPPED"
+        raw_value = "⚠️ MISSING"
+
+        if var in csv_specific_mapping:
+            matched_csv_header = csv_specific_mapping[var]
+            raw_value = sample_vars.get(matched_csv_header, raw_value)
+        elif var in sample_vars:
+            matched_csv_header = var
+            raw_value = sample_vars[var]
+        else:
+            for k, v in sample_vars.items():
+                normalized = k.lower().replace(" ", "_").replace("(", "").replace(")", "")
+                if "rollback_timer" in normalized:
+                    normalized = "pseudo_commit_timer"
+                if csv_to_schema_map.get(k) == var or normalized == var:
+                    matched_csv_header = k
+                    raw_value = v
+                    break
+
+        # Wrap string rendering formatting criteria correctly
+        if isinstance(raw_value, str) and raw_value != "⚠️ MISSING":
+            # Add explicit quote marks for text strings
+            if not raw_value.replace('.','',1).isdigit() and raw_value.lower() not in ['true', 'false'] and ',' not in raw_value:
+                formatted_val = f'"{raw_value}"'
+            else:
+                formatted_val = raw_value
+        else:
+            formatted_val = raw_value
+
+        print(f" [{idx}] {matched_csv_header} - {var} = {formatted_val}")
+        
+    print("\n💡 Verify the parameters above. If accurate, proceed to [6] to execute deployment.")
 
 def run_config_deployment_pipeline(session, base_url):
-    """CLI Option 6: Sanitizes parameters, applies custom JSON schema maps, and pushes deployment task."""
     res = load_manifest_csv()
     if not res or not res[0]:
         return
@@ -227,7 +253,6 @@ def run_config_deployment_pipeline(session, base_url):
     group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
     group_id = get_config_group_id(session, base_url, group_name) or group_name
     
-    # Automatically retrieve any custom schema alignments recorded during Option 5
     all_saved_mappings = load_local_mappings()
     custom_mappings = all_saved_mappings.get(csv_filename, {})
     if custom_mappings:
@@ -246,8 +271,18 @@ def run_config_deployment_pipeline(session, base_url):
     else:
         print("❌ Automation failed to initialize deployment variables execution task.")
 
+def get_policy_group_id(session, base_url, name):
+    """Translates user-provided text name into vManage policy group UUID."""
+    try:
+        groups = fetch_policy_groups(session, base_url)
+        for g in groups:
+            if g.get('name') == name:
+                return g.get('id')
+    except Exception:
+        pass
+    return None
+
 def run_policy_deployment_pipeline(session, base_url):
-    """CLI Option 7: Validates target policy rules and schedules architecture changes."""
     res = load_manifest_csv()
     if not res or not res[0]:
         return
@@ -277,10 +312,13 @@ def run_policy_deployment_pipeline(session, base_url):
         print("ℹ️ Operation halted. All targeted devices preserved their current associations.")
         return
 
-    policy_group_id = input("\n🏷️  Enter target Policy Group ID (UUID Matrix Key): ").strip()
-    if not policy_group_id:
+    policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
+    if not policy_input:
         print("❌ Invalid entry. Cancelling policy migration phase.")
         return
+
+    # Look up Policy Group Name to convert into the mandatory validation UUID string
+    policy_group_id = get_policy_group_id(session, base_url, policy_input) or policy_input
 
     print(f"\n🚀 Associating {len(devices_to_migrate)} systems with Policy Group ID: {policy_group_id}...")
     assoc_res = associate_policy_group(session, base_url, policy_group_id, devices_to_migrate)

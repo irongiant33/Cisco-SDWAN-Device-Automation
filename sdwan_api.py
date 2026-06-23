@@ -8,7 +8,6 @@ import re
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_xsrf_token(session, base_url):
-    """Retrieves mandatory validation token."""
     try:
         token_url = f"{base_url}/dataservice/client/token"
         res = session.get(token_url, timeout=5)
@@ -19,7 +18,6 @@ def get_xsrf_token(session, base_url):
     return None
 
 def refresh_jwt_access(session, base_url, refresh_token):
-    """Uses a long-lived token to request a short-lived JWT access token."""
     refresh_url = f"{base_url}/jwt/refresh"
     payload = {"refresh": refresh_token}
     try:
@@ -39,7 +37,6 @@ def refresh_jwt_access(session, base_url, refresh_token):
     return False
 
 def initialize_active_session(base_url, username, profile_data=None):
-    """Establishes or reinstates a JWT session token pipeline."""
     session = requests.Session()
     session.verify = False
     
@@ -81,7 +78,6 @@ def initialize_active_session(base_url, username, profile_data=None):
         return None
 
 def fetch_devices(session, base_url):
-    """Queries live nodes from inventory."""
     url = f"{base_url}/dataservice/device"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
@@ -89,7 +85,6 @@ def fetch_devices(session, base_url):
     raise requests.exceptions.HTTPError(f"HTTP Rejected: {res.status_code}")
 
 def fetch_config_groups(session, base_url):
-    """Queries all Configuration Groups from SD-WAN Manager using corrected DevNet path."""
     url = f"{base_url}/dataservice/v1/config-group"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
@@ -97,7 +92,6 @@ def fetch_config_groups(session, base_url):
     raise requests.exceptions.HTTPError(f"HTTP Rejected ({res.status_code}): {res.text}")
 
 def get_config_group_id(session, base_url, name):
-    """Translates user-provided text name into vManage configuration group UUID."""
     try:
         groups = fetch_config_groups(session, base_url)
         for g in groups:
@@ -108,7 +102,6 @@ def get_config_group_id(session, base_url, name):
     return None
 
 def fetch_policy_groups(session, base_url):
-    """Queries all Policy Groups from SD-WAN Manager."""
     url = f"{base_url}/dataservice/v1/policy-group"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
@@ -116,7 +109,6 @@ def fetch_policy_groups(session, base_url):
     raise requests.exceptions.HTTPError(f"HTTP Rejected ({res.status_code}): {res.text}")
 
 def fetch_policy_group_associations(session, base_url):
-    """Queries all active device-to-policy-group association matrices."""
     url = f"{base_url}/dataservice/v1/config-group/policy-group/associations"
     try:
         res = session.get(url, timeout=15)
@@ -127,7 +119,6 @@ def fetch_policy_group_associations(session, base_url):
     return []
 
 def _get_expected_variables(session, base_url, group_id):
-    """Queries the exact device variables schema expected by the configuration group."""
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/variables"
     try:
         res = session.get(url, timeout=30)
@@ -138,22 +129,16 @@ def _get_expected_variables(session, base_url, group_id):
                 for variable in device.get("variables", []):
                     if "name" in variable:
                         expected_names.add(variable["name"])
-            
             if expected_names:
                 return expected_names
-                
             print("⚠️ [DEBUG] HTTP 200 OK received, but no variable tracking objects found inside device blocks.")
         else:
             print(f"❌ [DEBUG] Controller rejected request with HTTP status code: {res.status_code}")
-            print(f"🔍 --- ERROR PAYLOAD RESPONSE --- \n{res.text}\n----------------------------------")
     except Exception as e:
         print(f"⚠️ Warning: Could not retrieve device variables schema: {e}")
-        if res is not None and hasattr(res, 'text') and res.text:
-            print(f"🔍 --- EXCEPTION RAW CONTEXT --- \n{res.text}\n----------------------------------")
     return set()
 
 def associate_devices(session, base_url, group_id, devices_payload):
-    """STEP 4: Handles standalone group binding and structural association verification."""
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
     assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
     payload = {"devices": assoc_devices}
@@ -174,7 +159,6 @@ def associate_devices(session, base_url, group_id, devices_payload):
                 if check_res.status_code == 200:
                     associated_data = check_res.json().get("devices", [])
                     associated_ids = {dev.get("id") for dev in associated_data if dev.get("id")}
-                    
                     if target_ids.issubset(associated_ids):
                         print("✅ Confirmed: All target devices are fully associated inside the group container backend.")
                         verified = True
@@ -182,20 +166,12 @@ def associate_devices(session, base_url, group_id, devices_payload):
             except Exception:
                 pass
             print(f"⏳ Verification attempt {attempt + 1}/12: Sync pending in database roster. Retrying...")
-            
         return verified
-            
     except Exception as e:
         print(f"❌ Structural layout binding rejected: {e}")
-        if 'res' in locals() and hasattr(res, 'text') and res.text:
-            print(f"🔍 --- CONTROLLER REJECTION DETAILS --- \n{res.text}\n----------------------------------")
         return False
 
 def deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=None):
-    """
-    STEP 6: Handles type translation formatting and initiates full deployment push task.
-    Incorporates persistent local JSON custom column-to-schema field mappings.
-    """
     custom_mappings = custom_mappings or {}
     expected_vars = _get_expected_variables(session, base_url, group_id)
     if expected_vars:
@@ -203,9 +179,6 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
         
     var_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/variables"
     var_devices = []
-    
-    # Invert custom mappings for rapid schema key identification during CSV processing
-    # Key = CSV header name, Value = Expected template schema key
     csv_to_schema_map = {csv_col: schema_var for schema_var, csv_col in custom_mappings.items()}
 
     for d in devices_payload:
@@ -213,13 +186,11 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
         for k, v in d["variables"].items():
             if k in ["raw_row"]:
                 continue
-                
             val_str = str(v).strip()
             if v is None or val_str == "":
                 continue
 
             matched_key = None
-            # Check custom interactive mappings override list first
             if k in csv_to_schema_map and csv_to_schema_map[k] in expected_vars:
                 matched_key = csv_to_schema_map[k]
             elif k in expected_vars:
@@ -241,7 +212,6 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
                     typed_value = (val_str.lower() == "true")
                 elif "," in val_str or matched_key in ["vpn1_svi1_dhcp_dns_servers", "vpn1_svi1_dhcp_exclude_range", "dhcp-server_dnsServers"]:
                     typed_value = [item.strip() for item in val_str.split(",") if item.strip()]
-                # 👇 FIX: Treat specific configuration variables strictly as strings even if numeric
                 elif matched_key in ["basic_consoleBaudRate", "consoleBaudRate"]:
                     typed_value = val_str
                 else:
@@ -260,11 +230,7 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
             "variables": sanitized_vars_list
         })
         
-    var_payload = {
-        "solution": "sdwan",
-        "devices": var_devices
-    }
-    
+    var_payload = {"solution": "sdwan", "devices": var_devices}
     try:
         res = session.put(var_url, json=var_payload, timeout=15)
         res.raise_for_status()
@@ -272,23 +238,12 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
     except Exception as e:
         print(f"❌ Variable payload mapping rejected: {e}")
         if 'res' in locals() and hasattr(res, 'text') and res.text:
-            print("\n🔍 --- SD-WAN MANAGER SERVER ERROR DETAILS ---")
-            print(res.text)
-            print("-----------------------------------------------\n")
-        print(f"{var_payload=}")
+            print(f"\n🔍 --- ERROR DETAILS --- \n{res.text}\n-----------------------")
         return None
 
-    # https://developer.cisco.com/docs/sdwan/deploy-config-group/
-    deploy_url = f"{base_url}/dataservice/v1/config-group/device/deploy"
-    
-    # The payload requires matching the target devices and specifying the configGroupId
     deploy_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/deploy"
-    
-    # Structure payload with target devices list
     assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
-    deploy_payload = {
-        "devices": assoc_devices
-    }
+    deploy_payload = {"devices": assoc_devices}
     
     try:
         res = session.post(deploy_url, json=deploy_payload, timeout=20)
@@ -296,12 +251,9 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
         return res.json().get("parentTaskId")
     except Exception as e:
         print(f"❌ Configuration deployment trigger failed: {e}")
-        if 'res' in locals() and hasattr(res, 'text') and res.text:
-            print(f"🔍 --- CONTROLLER RESPONSE RAW TEXT --- \n{res.text}\n-------------------------")
     return None
 
 def poll_task_status(session, base_url, task_id):
-    """Asynchronous polling verification engine loop tracker."""
     status_url = f"{base_url}/dataservice/device/action/status/{task_id}"
     for _ in range(30): 
         try:
@@ -317,35 +269,32 @@ def poll_task_status(session, base_url, task_id):
     return False, "Deployment polling action timed out."
 
 def associate_policy_group(session, base_url, policy_group_id, device_ids):
-    """Associates a list of device UUIDs with a specific Policy Group."""
-    url = f"{base_url}/dataservice/v1/config-group/policy-group/{policy_group_id}/associate"
+    # https://developer.cisco.com/docs/sd-wan/26-1/create-policy-group-association/
+    url = f"{base_url}/dataservice/v1/policy-group/{policy_group_id}/device/associate"
     payload = {"devices": [{"id": device_id} for device_id in device_ids]}
     headers = {'Content-Type': 'application/json'}
     try:
         response = session.post(url, json=payload, headers=headers, verify=False)
         response.raise_for_status()
         print(f"Successfully associated devices with Policy Group {policy_group_id}.")
-        return response.json()
+        return response
     except Exception as e:
         print(f"Error associating Policy Group: {e}")
-        if 'response' in locals() and response.text:
-            print(f"Details: {response.text}")
+        if 'response' in locals() and hasattr(response, 'text') and response.text:
+            print(f"\n🔍 --- ERROR DETAILS --- \n{response.text}\n-----------------------")
         return None
     
 def deploy_policy_group(session, base_url, policy_group_id, device_ids):
-    """Deploys the Policy Group for the associated devices."""
-    url = f"{base_url}/dataservice/v1/config-group/policy-group/{policy_group_id}/deploy"
+    # https://developer.cisco.com/docs/sd-wan/26-1/deploy-policy-group/
+    url = f"{base_url}/dataservice/v1/policy-group/{policy_group_id}/device/deploy"
     payload = {"devices": [{"id": device_id} for device_id in device_ids]}
     headers = {'Content-Type': 'application/json'}
     try:
         response = session.post(url, json=payload, headers=headers, verify=False)
         response.raise_for_status()
-        task_info = response.json()
-        task_id = task_info.get("parentTaskId")
-        print(f"Deployment triggered successfully. Task ID: {task_id}")
-        return task_id
+        return response.json().get("parentTaskId")
     except Exception as e:
         print(f"Error deploying Policy Group: {e}")
-        if 'response' in locals() and response.text:
-            print(f"Details: {response.text}")
+        if 'response' in locals() and hasattr(response, 'text') and response.text:
+            print(f"\n🔍 --- ERROR DETAILS --- \n{response.text}\n-----------------------")
         return None
