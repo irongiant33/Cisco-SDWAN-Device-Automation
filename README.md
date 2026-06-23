@@ -91,5 +91,5 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 - [ ] I should handle this error more gracefully because it is not really an error since the device already exists: ❌ Configuration Group association payload rejected (HTTP 400): {"error":{"message":"Config Group Association error","code":"CFGRP0018","details":"GenericGroup-ASSOCIATION validation : Device(s) already associated to group(s), device(s)-group(s): {IR1101-K9-FVH3002L7U6=ITS_Demo_1101}","type":"error"}}
 ❌ Automation failed to initialize transactions on controller framework layer.
     - [ ] just add a prompt for the user to ask whether to stop or skip and move on to the next step
-- [ ] add ability to up arrow and run old configuration options
+- [x] add ability to up arrow and run old configuration options
 - [ ] Get JWT to work right. It seems to ask for my password every 2nd run of the script no matter what, but it should be time-based and I shouldn't need to enter password if I have a refresh key local

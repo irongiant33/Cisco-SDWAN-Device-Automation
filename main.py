@@ -3,6 +3,8 @@ import sys
 import time
 import json
 import os
+import cmd
+import shlex
 from tabulate import tabulate
 
 from config import get_vmanage_target
@@ -86,8 +88,9 @@ def show_policy_groups(session, base_url):
     except Exception as e:
         print(f"❌ Failed to parse policy groups directory array: {e}")
 
-def load_manifest_csv():
-    csv_path = input("\n📂 Enter path to your Router Manifest CSV file (e.g., routers.csv): ").strip()
+def load_manifest_csv(csv_path=None):
+    if not csv_path:
+        csv_path = input("\n📂 Enter path to your Router Manifest CSV file (e.g., routers.csv): ").strip()
     try:
         with open(csv_path, mode='r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
@@ -113,13 +116,14 @@ def load_manifest_csv():
         })
     return devices_payload, headers, os.path.basename(csv_path)
 
-def run_association_pipeline(session, base_url):
-    res = load_manifest_csv()
+def run_association_pipeline(session, base_url, csv_path=None, group_name=None):
+    res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, _, _ = res
         
-    group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
+    if not group_name:
+        group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
     group_id = get_config_group_id(session, base_url, group_name)
     
     print(f"\n🚀 Phase 1: Associating structural layout mappings for {len(devices_payload)} nodes...")
@@ -129,17 +133,18 @@ def run_association_pipeline(session, base_url):
     else:
         print("❌ Association sequence rejected by controller framework.")
 
-def test_fetch_expected_variables(session, base_url):
+def test_fetch_expected_variables(session, base_url, csv_path=None, target_input=None):
     """
     CLI Option 5: Audits expected template variables against CSV columns.
     Saves alignment resolutions and outputs a custom layout mapping overview block.
     """
-    res = load_manifest_csv()
+    res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, csv_headers, csv_filename = res
 
-    target_input = input("🏷️ Enter Configuration Group Name or UUID: ").strip()
+    if not target_input:
+        target_input = input("🏷️ Enter Configuration Group Name or UUID: ").strip()
     if not target_input:
         print("❌ Invalid input provided.")
         return
@@ -244,13 +249,14 @@ def test_fetch_expected_variables(session, base_url):
         
     print("\n💡 Verify the parameters above. If accurate, proceed to [6] to execute deployment.")
 
-def run_config_deployment_pipeline(session, base_url):
-    res = load_manifest_csv()
+def run_config_deployment_pipeline(session, base_url, csv_path=None, group_name=None):
+    res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, _, csv_filename = res
         
-    group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
+    if not group_name:
+        group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
     group_id = get_config_group_id(session, base_url, group_name)
     
     all_saved_mappings = load_local_mappings()
@@ -282,13 +288,14 @@ def get_policy_group_id(session, base_url, name):
         pass
     return None
 
-def run_policy_deployment_pipeline(session, base_url):
-    res = load_manifest_csv()
+def run_policy_deployment_pipeline(session, base_url, csv_path=None, policy_input=None):
+    res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, _, _ = res
 
-    policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
+    if not policy_input:
+        policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
     if not policy_input:
         print("❌ Invalid entry. Cancelling policy migration phase.")
         return
@@ -338,6 +345,100 @@ def run_policy_deployment_pipeline(session, base_url):
     else:
         print("❌ Failed to initiate asynchronous policy deploy application command on fabric.")
 
+class SDWANShell(cmd.Cmd):
+    intro = (
+        "\n" + "="*70 + "\n"
+        "🎛️  SD-WAN DEVICE AUTOMATION INTERACTIVE SHELL (CONFIG GROUPS V1)\n"
+        "======================================================================\n"
+        " Type 'help' or '?' to list available commands.\n"
+        " Commands support direct arguments (e.g., command <csv_path> <group>)\n"
+        " or will prompt you interactively if arguments are missing.\n"
+        " Tab-completion is supported for CSV file paths.\n"
+        "======================================================================\n"
+    )
+    prompt = "sdwan> "
+
+    def __init__(self, session, base_url):
+        super().__init__()
+        self.session = session
+        self.base_url = base_url
+
+    def emptyline(self):
+        """Do nothing on empty input line."""
+        pass
+
+    def _complete_csv_files(self, text, line, begidx, endidx):
+        import glob
+        # We find arguments split by space up to the start of the current word being completed
+        cmd_args = line[:begidx].split()
+        # If we are completing the first argument to the command (cmd_args has length 1: the command name)
+        if len(cmd_args) == 1:
+            # Let's search for files matching text
+            files = glob.glob(text + "*")
+            return [f for f in files if f.endswith('.csv') or os.path.isdir(f)]
+        return []
+
+    def do_test_connectivity(self, arg):
+        """Run Inventory Verification Diagnostic (Test Connectivity).
+        Usage: test_connectivity
+        """
+        test_connectivity(self.session, self.base_url)
+
+    def do_show_config_groups(self, arg):
+        """Fetch & List All SD-WAN Configuration Groups.
+        Usage: show_config_groups
+        """
+        show_config_groups(self.session, self.base_url)
+
+    def do_show_policy_groups(self, arg):
+        """Fetch & List All SD-WAN Policy Groups.
+        Usage: show_policy_groups
+        """
+        show_policy_groups(self.session, self.base_url)
+
+    def do_associate_devices(self, arg):
+        """Associate Devices to Configuration Group.
+        Usage: associate_devices [csv_path] [group_name]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        group_name = args[1] if len(args) > 1 else None
+        run_association_pipeline(self.session, self.base_url, csv_path, group_name)
+
+    def do_audit_variables(self, arg):
+        """Audit & Interactively Map Expected Variables Schema.
+        Usage: audit_variables [csv_path] [group_name_or_uuid]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        target_input = args[1] if len(args) > 1 else None
+        test_fetch_expected_variables(self.session, self.base_url, csv_path, target_input)
+
+    def do_deploy_config(self, arg):
+        """Deploy Configuration Group (Variables & Push).
+        Usage: deploy_config [csv_path] [group_name]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        group_name = args[1] if len(args) > 1 else None
+        run_config_deployment_pipeline(self.session, self.base_url, csv_path, group_name)
+
+    def do_deploy_policy(self, arg):
+        """Deploy Policy Group changes to Devices.
+        Usage: deploy_policy [csv_path] [policy_name_or_uuid]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        policy_input = args[1] if len(args) > 1 else None
+        run_policy_deployment_pipeline(self.session, self.base_url, csv_path, policy_input)
+
+    def do_exit(self, arg):
+        """Exit the interactive shell.
+        Usage: exit
+        """
+        print("\n👋 Terminating operations processes. Goodbye.")
+        return True
+
 def main():
     base_url, username, profile_data = get_vmanage_target()
     if not base_url or not username:
@@ -347,39 +448,7 @@ def main():
     if not session:
         sys.exit(1)
         
-    while True:
-        print("\n" + "-"*50)
-        print("🎛️  OPERATIONS CONTROL DASHBOARD (CONFIG GROUPS V1)")
-        print("-"*50)
-        print(" [1] Run Inventory Verification Diagnostic (Test Connectivity)")
-        print(" [2] Fetch & List All SD-WAN Configuration Groups")
-        print(" [3] Fetch & List All SD-WAN Policy Groups")
-        print(" [4] Associate Devices to Configuration Group")
-        print(" [5] Audit & Interactively Map Expected Variables Schema")
-        print(" [6] Deploy Configuration Group (Variables & Push)")
-        print(" [7] Deploy Policy Group changes to Devices")
-        print(" [8] Exit Utility")
-        
-        choice = input("\n👉 Select operational option (1-8): ").strip()
-        if choice == "1":
-            test_connectivity(session, base_url)
-        elif choice == "2":
-            show_config_groups(session, base_url)
-        elif choice == "3":
-            show_policy_groups(session, base_url)
-        elif choice == "4":
-            run_association_pipeline(session, base_url)
-        elif choice == "5":
-            test_fetch_expected_variables(session, base_url)
-        elif choice == "6":
-            run_config_deployment_pipeline(session, base_url)
-        elif choice == "7":
-            run_policy_deployment_pipeline(session, base_url)
-        elif choice == "8":
-            print("\n👋 Terminating operations processes. Goodbye.")
-            break
-        else:
-            print("⚠️ Invalid entry. Please choose a value from 1 to 8.")
+    SDWANShell(session, base_url).cmdloop()
 
 if __name__ == "__main__":
     main()

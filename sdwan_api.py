@@ -4,6 +4,7 @@ import urllib3
 import requests
 from config import load_profiles, save_profiles
 import re
+from tabulate import tabulate
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -146,6 +147,36 @@ def _get_expected_variables(session, base_url, group_id):
         print(f"⚠️ Warning: Could not retrieve device variables schema: {e}")
     return set()
 
+def _get_config_group_name(session, base_url, group_id):
+    try:
+        groups = fetch_config_groups(session, base_url)
+        for g in groups:
+            g_id = g.get('id') or g.get('configGroupId')
+            if g_id == group_id:
+                return g.get('name') or g.get('configGroupName')
+    except Exception:
+        pass
+    return group_id
+
+def dissociate_device_from_group(session, base_url, old_group_id, device_id):
+    # https://developer.cisco.com/docs/sd-wan/26-1/delete-config-group-association/
+    url = f"{base_url}/dataservice/v1/config-group/{old_group_id}/device/associate"
+    payload = {"devices": [{"id": device_id}]}
+    res = session.delete(url, json=payload, timeout=15)
+    res.raise_for_status()
+
+def parse_association_conflict(error_text):
+    match = re.search(r'device\(s\)-group\(s\):\s*\{(.*?)\}', error_text)
+    if not match:
+        return {}
+    pairs = match.group(1).split(',')
+    conflicts = {}
+    for pair in pairs:
+        if '=' in pair:
+            dev, grp = pair.split('=', 1)
+            conflicts[dev.strip()] = grp.strip()
+    return conflicts
+
 def associate_devices(session, base_url, group_id, devices_payload):
     # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
@@ -177,15 +208,101 @@ def associate_devices(session, base_url, group_id, devices_payload):
             print(f"⏳ Verification attempt {attempt + 1}/12: Sync pending in database roster. Retrying...")
         return verified
     except Exception as e:
+        if 'res' in locals() and hasattr(res, 'text') and res.text:
+            try:
+                err_data = res.json()
+                err_code = err_data.get("error", {}).get("code")
+                err_details = err_data.get("error", {}).get("details", "")
+                if err_code == "CFGRP0018":
+                    conflicts = parse_association_conflict(err_details)
+                    if conflicts:
+                        proposed_group_name = _get_config_group_name(session, base_url, group_id)
+                        table_data = []
+                        for dev_id, cur_grp in conflicts.items():
+                            table_data.append([dev_id, cur_grp, proposed_group_name])
+                            
+                        print("\n⚠️  DEVICE CONFIGURATION GROUP CONFLICTS DETECTED:")
+                        print(tabulate(table_data, headers=["Device ID", "Current Group", "Proposed Group"], tablefmt="grid"))
+                        
+                        print("\nConflict Resolution Options:")
+                        print(" [1] Stop association (abort)")
+                        print(" [2] Associate all devices in the table with the new group (auto-override)")
+                        print(" [3] Go device-by-device")
+                        
+                        while True:
+                            choice = input("\n👉 Select conflict resolution option (1-3): ").strip()
+                            if choice in ["1", "2", "3"]:
+                                break
+                            print("⚠️ Invalid entry. Please choose 1, 2, or 3.")
+                        
+                        if choice == "1":
+                            print("❌ Association aborted by user choice.")
+                            return False
+                            
+                        devices_to_associate = [d for d in devices_payload]
+                        
+                        if choice == "2":
+                            for dev_id, cur_grp in conflicts.items():
+                                cur_grp_id = get_config_group_id(session, base_url, cur_grp)
+                                if cur_grp_id:
+                                    print(f"🔄 Dissociating device {dev_id} from group {cur_grp}...")
+                                    try:
+                                        dissociate_device_from_group(session, base_url, cur_grp_id, dev_id)
+                                    except Exception as diss_e:
+                                        print(f"❌ Failed to dissociate {dev_id} from {cur_grp}: {diss_e}")
+                                else:
+                                    print(f"❌ Could not find group ID for '{cur_grp}'. Cannot dissociate device '{dev_id}'.")
+                                    # Remove it from our retry list since we can't dissociate it
+                                    devices_to_associate = [d for d in devices_to_associate if d["deviceId"] != dev_id]
+                                    
+                        elif choice == "3":
+                            resolved_devices_to_associate = []
+                            for dev in devices_payload:
+                                dev_id = dev["deviceId"]
+                                if dev_id in conflicts:
+                                    cur_grp = conflicts[dev_id]
+                                    while True:
+                                        ans = input(f"\n👉 Move device '{dev_id}' from group '{cur_grp}' to '{proposed_group_name}'? (y/n): ").strip().lower()
+                                        if ans in ['y', 'n']:
+                                            break
+                                        print("⚠️ Invalid entry. Enter 'y' or 'n'.")
+                                        
+                                    if ans == 'y':
+                                        cur_grp_id = get_config_group_id(session, base_url, cur_grp)
+                                        if cur_grp_id:
+                                            print(f"🔄 Dissociating device {dev_id} from group {cur_grp}...")
+                                            try:
+                                                dissociate_device_from_group(session, base_url, cur_grp_id, dev_id)
+                                                resolved_devices_to_associate.append(dev)
+                                            except Exception as diss_e:
+                                                print(f"❌ Failed to dissociate {dev_id} from {cur_grp}: {diss_e}")
+                                        else:
+                                            print(f"❌ Could not find group ID for '{cur_grp}'. Device '{dev_id}' cannot be moved.")
+                                    else:
+                                        print(f"ℹ️ Skipping device '{dev_id}' (retains group '{cur_grp}').")
+                                else:
+                                    resolved_devices_to_associate.append(dev)
+                            devices_to_associate = resolved_devices_to_associate
+                            
+                        if not devices_to_associate:
+                            print("ℹ️ No devices left to associate. Operation stopped.")
+                            return False
+                            
+                        print(f"\n🚀 Retrying association for {len(devices_to_associate)} device(s) to group '{proposed_group_name}'...")
+                        return associate_devices(session, base_url, group_id, devices_to_associate)
+            except Exception as parse_e:
+                # If anything fails during parsing or resolution, we let it fall through to generic error printing
+                pass
+
         print(f"❌ Structural layout binding rejected: {e}")
         if 'res' in locals() and hasattr(res, 'text') and res.text:
             print(f"\n🔍 --- ERROR DETAILS --- \n{res.text}\n-----------------------")
         return False
 
-def deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=None):
+def deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=None, debug=False):
     custom_mappings = custom_mappings or {}
     expected_vars = _get_expected_variables(session, base_url, group_id)
-    if expected_vars:
+    if expected_vars and debug:
         print(f"📋 Configuration Group schema requires variables: {list(expected_vars)}")
         
     # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/
