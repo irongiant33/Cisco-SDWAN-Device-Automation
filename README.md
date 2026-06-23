@@ -53,22 +53,19 @@ python main.py
 
 ### 🎛️ Walkthrough Guide
 
-1. **Select an Environment Profile**: 
-   On start, the script checks your saved local settings. You can pick an environment from the menu list or register a brand new target controller IP/URL and username.
-2. **Authenticate**: 
-   Provide your password credentials if it is a new environment or if your refresh token expired.
-3. **Verify Connectivity (Dashboard Options 1 - 3)**:
-   Test your API access first. Option 3 pulls a clean table showing all active **Configuration Group Names**, **Policy Group Names**, and their UUID values.
-4. **Execute Bulk Deployment (Dashboard Options 4 - 7)**:
-   - Provide the path to your router CSV spreadsheet file (e.g., `routers.csv`).
-   - Type in the target **Configuration Group Name**.
-   - The automation system handles linking your devices, pushes the layout configurations, and polls the running task progress bar automatically.
+1. **Authenticate & Log In**: Run the script with `python main.py` and authenticate. The script will save your session details and long-lived refresh token locally, enabling token rotation so you don't need to re-authenticate next time.
+2. **Test Connectivity**: Run the `test` or `test_connectivity` command to verify that the discovered edge systems list and status are correct.
+3. **Audit Variables**: Test a single router in a CSV spreadsheet first. Run the `audit [csv_path] [group_name]` (or `audit_variables`) command to audit the variables and ensure appropriate column/schema mapping with the target Configuration Group.
+4. **Associate Routers**: Run the `associate [csv_path] [group_name]` (or `associate_devices`) command to associate the CSV routers with the configuration group. If conflicts are found, use the interactive resolution prompt.
+5. **Deploy Configuration**: Run the `deploy [csv_path] [group_name]` (or `deploy_config`) command to push and deploy the variable configurations.
+6. **Deploy Policy**: Run the `deploy_policy [csv_path] [policy_name_or_uuid]` command to deploy policy group changes to the devices.
+7. **Repeat As Needed**: As needed, repeat steps 4 and 5 to update device associations and configurations.
 
 ---
 
 ## 📊 Input CSV Layout Schema Requirement
 
-For options 4-7, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses **`Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
+For associating devices to configuration groups and policy groups, and deploying variables, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses **`Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
 
 ```csv
 Device ID,System IP,Host Name,Site Id,Dual Stack IPv6 Default,admin_username,admin_user_password
@@ -85,13 +82,17 @@ Device ID,Rollback Timer (sec),System IP,Host Name,Site Id,Dual Stack IPv6 Defau
 Alternatively, you can get a CSV by navigating to a configuration group in SD-WAN Manager's GUI, selecting the 3 dots next to the configuration group name, and selecting "Export". As long as there are some devices deployed, it will give you an idea of the example CSV format.
 
 
-## TODO
+## ⚠️ Shortcomings & Current Limitations
+
+1. **Scale Testing**: The engine has not been tested on multiple concurrent routers in the CSV manifest file yet.
+2. **Policy Group Associations via CLI**: The CLI does not yet support switching or overriding arbitrary policy group associations outside of the conflict resolution/association prompts.
+
+---
 
 ## Done
 - [x] add option at the end of the deployment stage to associate & deploy routers to a policy group
 - [x] Sometimes I receive the error "Configuration Group matching name 'ITS_Demo_1101' not discovered on environment." even though the configuration group definitely exists. I've found that running option 3 to fetch all config groups and then re-running this gets rid of the error, but I should figure out why this error exists.
 - [x] I should handle this error more gracefully because it is not really an error since the device already exists: ❌ Configuration Group association payload rejected (HTTP 400): {"error":{"message":"Config Group Association error","code":"CFGRP0018","details":"GenericGroup-ASSOCIATION validation : Device(s) already associated to group(s), device(s)-group(s): {IR1101-K9-FVH3002L7U6=ITS_Demo_1101}","type":"error"}}
-❌ Automation failed to initialize transactions on controller framework layer.
-    - [x] just add a prompt for the user to ask whether to stop or skip and move on to the next step
+- [x] just add a prompt for the user to ask whether to stop or skip and move on to the next step
 - [x] add ability to up arrow and run old configuration options
 - [x] Get JWT to work right. It seems to ask for my password every 2nd run of the script no matter what, but it should be time-based and I shouldn't need to enter password if I have a refresh key local
