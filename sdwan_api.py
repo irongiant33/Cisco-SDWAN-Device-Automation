@@ -8,6 +8,7 @@ import re
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def get_xsrf_token(session, base_url):
+    # # https://developer.cisco.com/docs/sdwan/authentication/#authentication
     try:
         token_url = f"{base_url}/dataservice/client/token"
         res = session.get(token_url, timeout=5)
@@ -18,6 +19,7 @@ def get_xsrf_token(session, base_url):
     return None
 
 def refresh_jwt_access(session, base_url, refresh_token):
+    # https://developer.cisco.com/docs/sdwan/authentication/#authentication
     refresh_url = f"{base_url}/jwt/refresh"
     payload = {"refresh": refresh_token}
     try:
@@ -47,6 +49,7 @@ def initialize_active_session(base_url, username, profile_data=None):
             return session
         print("⚠️ Stored refresh token expired. Prompting credentials...")
 
+    # https://developer.cisco.com/docs/sdwan/authentication/#authentication
     password = getpass.getpass(f"🔑 Enter vManage password for user '{username}': ")
     login_url = f"{base_url}/jwt/login"
     payload = {"username": username, "password": password}
@@ -78,6 +81,7 @@ def initialize_active_session(base_url, username, profile_data=None):
         return None
 
 def fetch_devices(session, base_url):
+    # https://developer.cisco.com/docs/sdwan/getting-started/#get-the-list-of-devices
     url = f"{base_url}/dataservice/device"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
@@ -85,6 +89,7 @@ def fetch_devices(session, base_url):
     raise requests.exceptions.HTTPError(f"HTTP Rejected: {res.status_code}")
 
 def fetch_config_groups(session, base_url):
+    # https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-by-solution/
     url = f"{base_url}/dataservice/v1/config-group"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
@@ -102,23 +107,26 @@ def get_config_group_id(session, base_url, name):
     return None
 
 def fetch_policy_groups(session, base_url):
+    # https://developer.cisco.com/docs/sd-wan/26-1/get-policy-group-by-solution/
     url = f"{base_url}/dataservice/v1/policy-group"
     res = session.get(url, timeout=15)
     if res.status_code == 200:
         return res.json().get('data', []) if isinstance(res.json(), dict) else res.json()
     raise requests.exceptions.HTTPError(f"HTTP Rejected ({res.status_code}): {res.text}")
 
-def fetch_policy_group_associations(session, base_url):
-    url = f"{base_url}/dataservice/v1/config-group/policy-group/associations"
+def fetch_policy_group_associations(session, base_url, policy_group_id):
+    url = f"{base_url}/dataservice/v1/{policy_group_id}/device/associate"
     try:
         res = session.get(url, timeout=15)
         if res.status_code == 200:
             return res.json().get('data', [])
     except Exception:
-        pass
+        print("⚠️ Could not fetch policy group associations")
     return []
 
 def _get_expected_variables(session, base_url, group_id):
+    # https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-device-variables/
+    # a device must be associated with the configuration group before a schema can be retrieved
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/variables"
     try:
         res = session.get(url, timeout=30)
@@ -139,6 +147,7 @@ def _get_expected_variables(session, base_url, group_id):
     return set()
 
 def associate_devices(session, base_url, group_id, devices_payload):
+    # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/
     url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
     assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
     payload = {"devices": assoc_devices}
@@ -169,6 +178,8 @@ def associate_devices(session, base_url, group_id, devices_payload):
         return verified
     except Exception as e:
         print(f"❌ Structural layout binding rejected: {e}")
+        if 'res' in locals() and hasattr(res, 'text') and res.text:
+            print(f"\n🔍 --- ERROR DETAILS --- \n{res.text}\n-----------------------")
         return False
 
 def deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=None):
@@ -177,10 +188,12 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
     if expected_vars:
         print(f"📋 Configuration Group schema requires variables: {list(expected_vars)}")
         
+    # https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/
     var_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/variables"
     var_devices = []
     csv_to_schema_map = {csv_col: schema_var for schema_var, csv_col in custom_mappings.items()}
 
+    # variables must match what is expected by the SD-WAN schema
     for d in devices_payload:
         sanitized_vars_list = []
         for k, v in d["variables"].items():
@@ -241,6 +254,7 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
             print(f"\n🔍 --- ERROR DETAILS --- \n{res.text}\n-----------------------")
         return None
 
+    # https://developer.cisco.com/docs/sd-wan/26-1/deploy-config-group/
     deploy_url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/deploy"
     assoc_devices = [{"id": d["deviceId"]} for d in devices_payload]
     deploy_payload = {"devices": assoc_devices}
@@ -254,6 +268,7 @@ def deploy_device_variables(session, base_url, group_id, devices_payload, custom
     return None
 
 def poll_task_status(session, base_url, task_id):
+    # https://developer.cisco.com/docs/sd-wan/26-1/find-status/
     status_url = f"{base_url}/dataservice/device/action/status/{task_id}"
     for _ in range(30): 
         try:

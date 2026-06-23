@@ -120,7 +120,7 @@ def run_association_pipeline(session, base_url):
     devices_payload, _, _ = res
         
     group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
-    group_id = get_config_group_id(session, base_url, group_name) or group_name
+    group_id = get_config_group_id(session, base_url, group_name)
     
     print(f"\n🚀 Phase 1: Associating structural layout mappings for {len(devices_payload)} nodes...")
     success = associate_devices(session, base_url, group_id, devices_payload)
@@ -143,7 +143,7 @@ def test_fetch_expected_variables(session, base_url):
     if not target_input:
         print("❌ Invalid input provided.")
         return
-    group_id = get_config_group_id(session, base_url, target_input) or target_input
+    group_id = get_config_group_id(session, base_url, target_input)
     print(f"🔍 Fetching variable schema rules for Group: {group_id}...")
     
     expected_vars = _get_expected_variables(session, base_url, group_id)
@@ -251,7 +251,7 @@ def run_config_deployment_pipeline(session, base_url):
     devices_payload, _, csv_filename = res
         
     group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
-    group_id = get_config_group_id(session, base_url, group_name) or group_name
+    group_id = get_config_group_id(session, base_url, group_name)
     
     all_saved_mappings = load_local_mappings()
     custom_mappings = all_saved_mappings.get(csv_filename, {})
@@ -287,10 +287,18 @@ def run_policy_deployment_pipeline(session, base_url):
     if not res or not res[0]:
         return
     devices_payload, _, _ = res
+
+    policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
+    if not policy_input:
+        print("❌ Invalid entry. Cancelling policy migration phase.")
+        return
+
+    # Look up Policy Group Name to convert into the mandatory validation UUID string
+    policy_group_id = get_policy_group_id(session, base_url, policy_input)
         
     device_ids = [d["deviceId"] for d in devices_payload]
     print("\n🔍 Checking existing Policy Group associations across the target edge pool...")
-    all_assocs = fetch_policy_group_associations(session, base_url)
+    all_assocs = fetch_policy_group_associations(session, base_url, policy_group_id)
     existing_mappings = {}
     for record in all_assocs:
         p_id = record.get('id')
@@ -311,14 +319,6 @@ def run_policy_deployment_pipeline(session, base_url):
     if not devices_to_migrate:
         print("ℹ️ Operation halted. All targeted devices preserved their current associations.")
         return
-
-    policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
-    if not policy_input:
-        print("❌ Invalid entry. Cancelling policy migration phase.")
-        return
-
-    # Look up Policy Group Name to convert into the mandatory validation UUID string
-    policy_group_id = get_policy_group_id(session, base_url, policy_input) or policy_input
 
     print(f"\n🚀 Associating {len(devices_to_migrate)} systems with Policy Group ID: {policy_group_id}...")
     assoc_res = associate_policy_group(session, base_url, policy_group_id, devices_to_migrate)

@@ -57,9 +57,9 @@ python main.py
    On start, the script checks your saved local settings. You can pick an environment from the menu list or register a brand new target controller IP/URL and username.
 2. **Authenticate**: 
    Provide your password credentials if it is a new environment or if your refresh token expired.
-3. **Verify Connectivity (Dashboard Option 1 or 3)**:
-   Test your API access first. Option 3 pulls a clean table showing all active **Configuration Group Names** and their UUID values.
-4. **Execute Bulk Deployment (Dashboard Option 2)**:
+3. **Verify Connectivity (Dashboard Options 1 - 3)**:
+   Test your API access first. Option 3 pulls a clean table showing all active **Configuration Group Names**, **Policy Group Names**, and their UUID values.
+4. **Execute Bulk Deployment (Dashboard Options 4 - 7)**:
    - Provide the path to your router CSV spreadsheet file (e.g., `routers.csv`).
    - Type in the target **Configuration Group Name**.
    - The automation system handles linking your devices, pushes the layout configurations, and polls the running task progress bar automatically.
@@ -68,7 +68,7 @@ python main.py
 
 ## 📊 Input CSV Layout Schema Requirement
 
-For option 2, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses **`Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
+For options 4-7, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses **`Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
 
 ```csv
 Device ID,System IP,Host Name,Site Id,Dual Stack IPv6 Default,admin_username,admin_user_password
