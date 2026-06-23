@@ -26,7 +26,9 @@ def refresh_jwt_access(session, base_url, refresh_token):
     try:
         res = session.post(refresh_url, json=payload, timeout=10)
         if res.status_code == 200:
-            access_token = res.json().get("token")
+            data = res.json()
+            access_token = data.get("token")
+            new_refresh = data.get("refresh")
             session.headers.update({
                 'Authorization': f"Bearer {access_token}",
                 'Content-Type': 'application/json'
@@ -34,10 +36,10 @@ def refresh_jwt_access(session, base_url, refresh_token):
             xsrf = get_xsrf_token(session, base_url)
             if xsrf:
                 session.headers.update({'X-XSRF-TOKEN': xsrf})
-            return True
+            return new_refresh or refresh_token
     except Exception:
         pass
-    return False
+    return None
 
 def initialize_active_session(base_url, username, profile_data=None):
     session = requests.Session()
@@ -45,8 +47,12 @@ def initialize_active_session(base_url, username, profile_data=None):
     
     if profile_data and 'refresh_token' in profile_data:
         print("🔄 Exchanging cached profile refresh token for short-lived JWT access...")
-        if refresh_jwt_access(session, base_url, profile_data['refresh_token']):
+        new_refresh = refresh_jwt_access(session, base_url, profile_data['refresh_token'])
+        if new_refresh:
             print("✨ Re-bound cleanly! Re-established Bearer Authorization.")
+            profiles = load_profiles()
+            profiles[base_url] = {"username": username, "refresh_token": new_refresh}
+            save_profiles(profiles)
             return session
         print("⚠️ Stored refresh token expired. Prompting credentials...")
 
