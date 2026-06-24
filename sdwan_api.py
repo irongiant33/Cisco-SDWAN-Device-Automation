@@ -364,6 +364,7 @@ def _get_expected_variables(session, base_url, group_id):
             print("⚠️ [DEBUG] HTTP 200 OK received, but no variable tracking objects found inside device blocks.")
         else:
             print(f"❌ [DEBUG] Controller rejected request with HTTP status code: {res.status_code}")
+            print(f"           {res.text}")
     except Exception as e:
         print(f"⚠️ Warning: Could not retrieve device variables schema: {e}")
     return set()

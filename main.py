@@ -60,6 +60,35 @@ def save_local_mappings(mappings):
     except Exception as e:
         print(f"⚠️ Warning: Could not save layout schema mappings: {e}")
 
+def _looks_like_schema_mapping(value):
+    return isinstance(value, dict) and bool(value) and all(isinstance(v, str) for v in value.values())
+
+def _mapping_group_key(group_id):
+    return group_id or "__unknown_config_group__"
+
+def get_local_mapping(all_mappings, csv_filename, group_id):
+    csv_entry = all_mappings.get(csv_filename, {})
+    if _looks_like_schema_mapping(csv_entry):
+        return dict(csv_entry), True, True
+
+    group_entry = csv_entry.get(_mapping_group_key(group_id), {}) if isinstance(csv_entry, dict) else {}
+    if isinstance(group_entry, dict) and "mappings" in group_entry:
+        return dict(group_entry.get("mappings") or {}), False, True
+    if _looks_like_schema_mapping(group_entry):
+        return dict(group_entry), False, True
+    return {}, False, False
+
+def set_local_mapping(all_mappings, csv_filename, group_id, group_name, mapping):
+    csv_entry = all_mappings.get(csv_filename, {})
+    if not isinstance(csv_entry, dict) or _looks_like_schema_mapping(csv_entry):
+        csv_entry = {}
+
+    csv_entry[_mapping_group_key(group_id)] = {
+        "group_name": group_name,
+        "mappings": mapping,
+    }
+    all_mappings[csv_filename] = csv_entry
+
 def test_connectivity(session, base_url):
     print("\n🔄 Interrogating node statistics from inventory directory matrix...")
     try:
@@ -401,12 +430,33 @@ def test_fetch_expected_variables(session, base_url, csv_path=None, target_input
         print("ℹ️ No expected variables found, or Configuration Group ID is invalid.")
         return
 
+    all_saved_mappings = load_local_mappings()
+    csv_specific_mapping, loaded_legacy_mapping, mapping_entry_exists = get_local_mapping(all_saved_mappings, csv_filename, group_id)
+    mapping_changed = False
+
+    if mapping_entry_exists:
+        source_note = "legacy CSV-level cache" if loaded_legacy_mapping else "CSV/configuration-group cache"
+        print(f"\n📋 Found {len(csv_specific_mapping)} saved schema mapping rule(s) for '{csv_filename}' and '{group_name}' ({source_note}).")
+        while True:
+            choice = input("👉 Preserve this saved mapping, or change it? (P/C): ").strip().lower()
+            if choice in ("", "p", "preserve"):
+                print("✅ Preserving saved mapping for this audit.")
+                break
+            if choice in ("c", "change"):
+                csv_specific_mapping = {}
+                mapping_changed = True
+                print("🛠️ Existing mapping cleared for this audit. Rebuild mappings below where needed.")
+                break
+            print("⚠️ Invalid entry. Choose 'P' to preserve or 'C' to change.")
+
     print(f"\n✅ Successfully retrieved {len(expected_vars)} schema variables. Checking layout maps...")
     
     missing_vars = []
     for var in sorted(expected_vars):
         matched = False
-        if var in csv_headers:
+        if var in csv_specific_mapping and csv_specific_mapping[var] in csv_headers:
+            matched = True
+        elif var in csv_headers:
             matched = True
         else:
             for header in csv_headers:
@@ -418,9 +468,6 @@ def test_fetch_expected_variables(session, base_url, csv_path=None, target_input
                     break
         if not matched:
             missing_vars.append(var)
-
-    all_saved_mappings = load_local_mappings()
-    csv_specific_mapping = all_saved_mappings.get(csv_filename, {})
 
     if missing_vars:
         print(f"\n⚠️ Schema Gap Detected! {len(missing_vars)} target template variable(s) were not found in the CSV.")
@@ -439,11 +486,13 @@ def test_fetch_expected_variables(session, base_url, csv_path=None, target_input
                     if 1 <= c_idx <= len(columns_list):
                         mapped_column_name = columns_list[c_idx - 1]
                         csv_specific_mapping[missing_var] = mapped_column_name
+                        mapping_changed = True
                         print(f"✅ Mapped: '{missing_var}' <--- CSV Column: '{mapped_column_name}'")
                         break
                 print("⚠️ Invalid entry. Choose a column digit or 'S'.")
 
-        all_saved_mappings[csv_filename] = csv_specific_mapping
+    if mapping_changed or loaded_legacy_mapping or not mapping_entry_exists:
+        set_local_mapping(all_saved_mappings, csv_filename, group_id, group_name, csv_specific_mapping)
         save_local_mappings(all_saved_mappings)
 
     # Invert custom mappings for rapid lookup identification
@@ -505,9 +554,19 @@ def run_config_deployment_pipeline(session, base_url, csv_path=None, group_name=
         return
 
     all_saved_mappings = load_local_mappings()
-    custom_mappings = all_saved_mappings.get(csv_filename, {})
+    custom_mappings, loaded_legacy_mapping, mapping_entry_exists = get_local_mapping(all_saved_mappings, csv_filename, group_id)
+    if not mapping_entry_exists:
+        audit_csv_arg = csv_path or csv_filename
+        audit_command = f"audit_variables {shlex.quote(audit_csv_arg)} {shlex.quote(group_id)}"
+        print("\n❌ No audited schema mapping entry found for this CSV and Configuration Group.")
+        print("   Run audit_variables first so the deployment mapping can be reviewed and stored.")
+        print(f"\nCopy/paste this command:\n{audit_command}")
+        return
     if custom_mappings:
-        print(f"📋 Loaded {len(custom_mappings)} active custom layout column mapping rules from storage cache.")
+        source_note = "legacy CSV-level cache" if loaded_legacy_mapping else "CSV/configuration-group cache"
+        print(f"📋 Loaded {len(custom_mappings)} active custom layout column mapping rules from {source_note}.")
+    else:
+        print("📋 Found audited schema mapping entry with no custom layout column rules required.")
 
     print(f"\n🚀 Phase 2: Processing and pushing variable deployment matrices to '{group_name}'...")
     task_id = deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=custom_mappings)
