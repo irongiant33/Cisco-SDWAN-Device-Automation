@@ -7,6 +7,7 @@ import cmd
 import shlex
 import glob
 import re
+from collections import Counter
 from tabulate import tabulate
 
 from config import (
@@ -27,7 +28,14 @@ from sdwan_api import (
     fetch_policy_group_associations,
     associate_policy_group,
     deploy_policy_group,
-    _get_expected_variables
+    _get_expected_variables,
+    build_config_group_device_map,
+    build_policy_group_device_map,
+    build_device_inventory_map,
+    lookup_inventory_record,
+    lookup_group_record,
+    normalize_sync_status,
+    normalize_reachability,
 )
 
 MAPPINGS_FILE = "schema_mappings.json"
@@ -528,11 +536,10 @@ def run_policy_deployment_pipeline(session, base_url, csv_path=None, policy_inpu
     print(f"\n🔍 Checking existing Policy Group associations for '{policy_group_name}' across the target edge pool...")
     all_assocs = fetch_policy_group_associations(session, base_url, policy_group_id)
     existing_mappings = {}
-    for record in all_assocs:
-        p_id = record.get('id')
-        for dev in record.get('devices', []):
-            if dev.get('id') in device_ids:
-                existing_mappings[dev.get('id')] = p_id
+    for dev in all_assocs:
+        dev_id = dev.get('id') if isinstance(dev, dict) else dev
+        if dev_id in device_ids:
+            existing_mappings[dev_id] = policy_group_id
 
     devices_to_migrate = list(device_ids)
     if existing_mappings:
@@ -565,6 +572,130 @@ def run_policy_deployment_pipeline(session, base_url, csv_path=None, policy_inpu
             print(f"\n❌ Deployment failed: {msg}")
     else:
         print("❌ Failed to initiate asynchronous policy deploy application command on fabric.")
+
+def _get_group_lists_for_status(session, base_url):
+    config_groups = get_cached_config_groups(base_url)
+    policy_groups = get_cached_policy_groups(base_url)
+
+    if config_groups is None:
+        print("\nℹ️ No cached Configuration Groups found.")
+        print("   Run 'show_config_groups' to refresh the list. Fetching live from SD-WAN Manager now...")
+        try:
+            config_groups = fetch_config_groups(session, base_url)
+        except Exception as e:
+            print(f"❌ Failed to fetch configuration groups: {e}")
+            config_groups = []
+
+    if policy_groups is None:
+        print("\nℹ️ No cached Policy Groups found.")
+        print("   Run 'show_policy_groups' to refresh the list. Fetching live from SD-WAN Manager now...")
+        try:
+            policy_groups = fetch_policy_groups(session, base_url)
+        except Exception as e:
+            print(f"❌ Failed to fetch policy groups: {e}")
+            policy_groups = []
+
+    return config_groups, policy_groups
+
+def _print_count_summary(title, counter):
+    print(f"\n{title}")
+    if not counter:
+        print("  (none)")
+        return
+    for label, count in sorted(counter.items(), key=lambda item: (-item[1], str(item[0]))):
+        print(f"  {label}: {count}")
+
+def run_device_status_report(session, base_url, csv_path=None):
+    res = load_manifest_csv(csv_path)
+    if not res or not res[0]:
+        return
+    devices_payload, _, csv_filename = res
+    target_device_ids = [d["deviceId"] for d in devices_payload]
+
+    print(f"\n🔍 Checking status for {len(target_device_ids)} device(s) from '{csv_filename}'...")
+    config_groups, policy_groups = _get_group_lists_for_status(session, base_url)
+
+    print("🔄 Fetching device inventory...")
+    try:
+        inventory = fetch_devices(session, base_url)
+    except Exception as e:
+        print(f"❌ Failed to fetch device inventory: {e}")
+        return
+    inventory_map = build_device_inventory_map(inventory)
+
+    print("🔄 Resolving configuration group associations...")
+    config_group_map = build_config_group_device_map(
+        session, base_url, config_groups, target_device_ids=target_device_ids
+    )
+
+    print("🔄 Resolving policy group associations...")
+    policy_group_map = build_policy_group_device_map(
+        session, base_url, policy_groups, target_device_ids=target_device_ids
+    )
+
+    rows = []
+    config_group_counts = Counter()
+    policy_group_counts = Counter()
+    reachability_counts = Counter()
+    sync_status_counts = Counter()
+
+    for device_id in target_device_ids:
+        _, config_record = lookup_group_record(config_group_map, device_id)
+        _, policy_record = lookup_group_record(policy_group_map, device_id)
+        inventory_record = lookup_inventory_record(inventory_map, device_id)
+
+        config_group = config_record.get("config_group", "None") if config_record else "None"
+        policy_group = policy_record.get("policy_group", "None") if policy_record else "None"
+        association = config_record.get("association") if config_record else None
+        reachability = normalize_reachability(inventory_record)
+        sync_status = normalize_sync_status(association, inventory_record)
+
+        rows.append([
+            device_id,
+            config_group,
+            policy_group,
+            reachability,
+            sync_status,
+        ])
+        config_group_counts[config_group] += 1
+        policy_group_counts[policy_group] += 1
+        reachability_counts[reachability] += 1
+        sync_status_counts[sync_status] += 1
+
+    print("\n" + "=" * 90)
+    print("📊 DEVICE STATUS REPORT")
+    print("=" * 90)
+    print(tabulate(
+        rows,
+        headers=["Device ID", "Config Group", "Policy Group", "Reachability", "Sync Status"],
+        tablefmt="grid",
+    ))
+
+    print("\n" + "=" * 90)
+    print("📈 SUMMARY")
+    print("=" * 90)
+    _print_count_summary("Configuration Groups:", config_group_counts)
+    _print_count_summary("Policy Groups:", policy_group_counts)
+
+    reachable = reachability_counts.get("Reachable", 0)
+    unreachable = reachability_counts.get("Unreachable", 0)
+    print("\nReachability:")
+    print(f"  Reachable: {reachable}")
+    print(f"  Unreachable: {unreachable}")
+    unknown_reachability = len(target_device_ids) - reachable - unreachable
+    if unknown_reachability:
+        print(f"  Unknown: {unknown_reachability}")
+
+    in_sync = sync_status_counts.get("In Sync", 0)
+    out_of_sync = sync_status_counts.get("Out of Sync", 0)
+    sync_pending = sync_status_counts.get("Sync Pending", 0)
+    print("\nSync Status:")
+    print(f"  In Sync: {in_sync}")
+    print(f"  Out of Sync: {out_of_sync}")
+    print(f"  Sync Pending: {sync_pending}")
+    other_sync = len(target_device_ids) - in_sync - out_of_sync - sync_pending
+    if other_sync:
+        print(f"  Other/Unknown: {other_sync}")
 
 class SDWANShell(cmd.Cmd):
     intro = (
@@ -652,6 +783,14 @@ class SDWANShell(cmd.Cmd):
         csv_path = args[0] if len(args) > 0 else None
         policy_input = args[1] if len(args) > 1 else None
         run_policy_deployment_pipeline(self.session, self.base_url, csv_path, policy_input)
+
+    def do_device_status(self, arg):
+        """Check device status for routers listed in a CSV manifest.
+        Usage: device_status [csv_path]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        run_device_status_report(self.session, self.base_url, csv_path)
 
     def do_clear(self, arg):
         """Clear the terminal output.

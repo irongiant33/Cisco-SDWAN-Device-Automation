@@ -85,8 +85,8 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 
 ## ⚠️ Shortcomings & Current Limitations
 
-1. **Scale Testing**: The engine has not been tested on multiple concurrent routers in the CSV manifest file yet.
-2. **Policy Group Associations via CLI**: The CLI does not yet support switching or overriding arbitrary policy group associations outside of the conflict resolution/association prompts.
+1. **Policy Group Associations via CLI**: The CLI does not yet support switching or overriding arbitrary policy group associations outside of the conflict resolution/association prompts.
+2. **API limits for devices**: the API should support between 50-100 devices per call. 
 
 ---
 
@@ -94,9 +94,13 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 
 - [ ] check schema mappings file when auditing variables. Ask if you want to preserve the mapping or change it.
 - [ ] schema mappings should be per CSV per configuration group. Not just per CSV
+- [ ] Separate the deploy_policy function into an associate and deploy step, just like with the configuration groups. OR add the ability to check and verify-reassociation just like for the associate devices with a configuration group step. 
+- [ ] Add check to CSV upload step where if the CSV is larger than 100 devices to break into multiple CSV files to ensure parsability be the UI
+- [ ] when there are device configuration group conflicts detected, when printing out the table, also print out a table of the devices where there is not a conflict (if any) and print out a statistic of how many devices in the CSV had a configuration group conflict out of the total number of devices in the CSV
 
 ## Done
 
+- [x] add the ability to check on the status of devices. Should be able to use a CSV file just like for other devices. The result of this output should show a table of devices from the CSV file, what configuration group they are associated with, what policy group they are associated with, its reachability, and the device status (in sync, sync pending, out of sync). At the end of the table, it should give a summary of the number of devices in each configuration group, number of devices in each policy group, number of reachable devices, number of unreachable devices, number of devices in sync, out of sync, and sync pending. 
 - [x] instead of requiring multiple functions to use the function get_config_group_id after a user inputs the string, make this a separate function similar to loading the CSV. The user should have the option to select from a list of configuration groups or enter their own configuration group. If there are over 20 configuration groups, just prompt the user to enter it via full string
 
 - [x] add option at the end of the deployment stage to associate & deploy routers to a policy group

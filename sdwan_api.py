@@ -146,15 +146,205 @@ def fetch_policy_groups(session, base_url):
         return res.json().get('data', []) if isinstance(res.json(), dict) else res.json()
     raise requests.exceptions.HTTPError(f"HTTP Rejected ({res.status_code}): {res.text}")
 
-def fetch_policy_group_associations(session, base_url, policy_group_id):
-    url = f"{base_url}/dataservice/v1/{policy_group_id}/device/associate"
+def fetch_config_group_associations(session, base_url, group_id):
+    # https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-association/
+    url = f"{base_url}/dataservice/v1/config-group/{group_id}/device/associate"
     try:
         res = session.get(url, timeout=15)
         if res.status_code == 200:
-            return res.json().get('data', [])
+            data = res.json()
+            if isinstance(data, dict):
+                return data.get("devices", [])
+    except Exception:
+        pass
+    return []
+
+def _extract_policy_group_devices(data):
+    if isinstance(data, dict):
+        if "devices" in data:
+            return data.get("devices", [])
+        if "data" in data:
+            return _extract_policy_group_devices(data.get("data"))
+    if isinstance(data, list):
+        devices = []
+        for record in data:
+            if isinstance(record, dict) and "devices" in record:
+                devices.extend(record.get("devices", []))
+            elif isinstance(record, dict):
+                devices.append(record)
+        return devices
+    return []
+
+def fetch_policy_group_associations(session, base_url, policy_group_id):
+    # https://developer.cisco.com/docs/sd-wan/26-1/get-policy-group-association/
+    url = f"{base_url}/dataservice/v1/policy-group/{policy_group_id}/device/associate"
+    try:
+        res = session.get(url, timeout=15)
+        if res.status_code == 200:
+            return _extract_policy_group_devices(res.json())
     except Exception:
         print("⚠️ Could not fetch policy group associations")
     return []
+
+def _device_ids_equivalent(left, right):
+    if not left or not right:
+        return False
+    left = left.strip().lower()
+    right = right.strip().lower()
+    return left == right or left in right or right in left
+
+def _group_has_devices(group):
+    count = group.get("numberOfDevices", group.get("associatedDevicesCount", group.get("devicesCount")))
+    if isinstance(count, int) and count > 0:
+        return True
+    devices = group.get("devices")
+    return isinstance(devices, list) and len(devices) > 0
+
+def _all_targets_found(device_map, target_ids):
+    if not target_ids:
+        return False
+    found = set()
+    for mapped_id in device_map:
+        for target_id in target_ids:
+            if _device_ids_equivalent(mapped_id, target_id):
+                found.add(target_id)
+    return found == target_ids
+
+def build_config_group_device_map(session, base_url, config_groups, target_device_ids=None):
+    """Map device IDs to config group name and association metadata."""
+    target_ids = {d.lower() for d in target_device_ids} if target_device_ids else None
+    device_map = {}
+    groups_with_devices = [g for g in config_groups if _group_has_devices(g)]
+    groups_without_devices = [g for g in config_groups if g not in groups_with_devices]
+    groups_to_scan = groups_with_devices + groups_without_devices
+
+    for group in groups_to_scan:
+        group_id = group.get("id") or group.get("configGroupId")
+        group_name = group.get("name") or group.get("configGroupName", "Unknown")
+        if not group_id:
+            continue
+
+        for device in fetch_config_group_associations(session, base_url, group_id):
+            device_id = device.get("id")
+            if not device_id:
+                continue
+            if target_ids and not any(_device_ids_equivalent(device_id, target_id) for target_id in target_ids):
+                continue
+            device_map[device_id] = {
+                "config_group": group_name,
+                "association": device,
+            }
+
+        if _all_targets_found(device_map, target_ids):
+            break
+
+    return device_map
+
+def build_policy_group_device_map(session, base_url, policy_groups, target_device_ids=None):
+    """Map device IDs to policy group name."""
+    target_ids = {d.lower() for d in target_device_ids} if target_device_ids else None
+    device_map = {}
+    groups_with_devices = [g for g in policy_groups if _group_has_devices(g)]
+    groups_without_devices = [g for g in policy_groups if g not in groups_with_devices]
+    groups_to_scan = groups_with_devices + groups_without_devices
+
+    for group in groups_to_scan:
+        group_id = group.get("id")
+        group_name = group.get("name", "Unknown")
+        if not group_id:
+            continue
+
+        for device in fetch_policy_group_associations(session, base_url, group_id):
+            device_id = device.get("id") if isinstance(device, dict) else device
+            if not device_id:
+                continue
+            if target_ids and not any(_device_ids_equivalent(device_id, target_id) for target_id in target_ids):
+                continue
+            device_map[device_id] = {
+                "policy_group": group_name,
+                "association": device if isinstance(device, dict) else {"id": device_id},
+            }
+
+        if _all_targets_found(device_map, target_ids):
+            break
+
+    return device_map
+
+def build_device_inventory_map(devices):
+    """Index inventory records by common device identifiers."""
+    inventory_map = {}
+    for device in devices:
+        keys = {
+            device.get("deviceId"),
+            device.get("uuid"),
+            device.get("chasisNumber"),
+            device.get("serialNumber"),
+            device.get("board-serial"),
+            device.get("host-name"),
+        }
+        for key in keys:
+            if key:
+                inventory_map[str(key).lower()] = device
+    return inventory_map
+
+def lookup_inventory_record(inventory_map, device_id):
+    if not device_id:
+        return None
+    direct = inventory_map.get(device_id.lower())
+    if direct:
+        return direct
+    for key, record in inventory_map.items():
+        if _device_ids_equivalent(device_id, key):
+            return record
+        for candidate in (
+            record.get("deviceId"),
+            record.get("uuid"),
+            record.get("chasisNumber"),
+            record.get("serialNumber"),
+            record.get("board-serial"),
+            record.get("host-name"),
+        ):
+            if candidate and _device_ids_equivalent(device_id, candidate):
+                return record
+    return None
+
+def lookup_group_record(device_map, device_id):
+    if not device_id:
+        return None, None
+    for key, record in device_map.items():
+        if _device_ids_equivalent(device_id, key):
+            return key, record
+    return None, None
+
+def normalize_sync_status(association=None, inventory=None):
+    message = ""
+    up_to_date = None
+    if association:
+        message = (association.get("configStatusMessage") or "").strip()
+        up_to_date = association.get("configGroupUpToDate")
+    if not message and inventory:
+        message = (inventory.get("configStatusMessage") or "").strip()
+
+    message_lower = message.lower()
+    if "out of sync" in message_lower:
+        return "Out of Sync"
+    if "sync pending" in message_lower or message_lower == "pending":
+        return "Sync Pending"
+    if "in sync" in message_lower:
+        return "In Sync"
+    if str(up_to_date).lower() == "true":
+        return "In Sync"
+    if str(up_to_date).lower() == "false":
+        return "Sync Pending"
+    if message:
+        return message
+    return "Unknown"
+
+def normalize_reachability(inventory):
+    if not inventory:
+        return "Unknown"
+    reachability = (inventory.get("reachability") or "unknown").strip()
+    return reachability.title()
 
 def _get_expected_variables(session, base_url, group_id):
     # https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-device-variables/
