@@ -186,6 +186,103 @@ def fetch_policy_group_associations(session, base_url, policy_group_id):
         print("⚠️ Could not fetch policy group associations")
     return []
 
+def fetch_topologies(session, base_url, debug=False):
+    """
+    Fetch all available topology groups from SD-WAN Manager.
+    https://developer.cisco.com/docs/sd-wan/26-1/get-topology-group-by-solution/
+    """
+    url = f"{base_url}/dataservice/v1/topology-group"
+    try:
+        res = session.get(url, timeout=60)
+        if res.status_code == 200:
+            return res.json().get('data', []) if isinstance(res.json(), dict) else res.json()
+        print(f"❌ Failed to fetch topologies (HTTP {res.status_code}).")
+        try:
+            err = res.json()
+            msg = err.get("error", {}).get("message") or err.get("message")
+            details = err.get("error", {}).get("details") or err.get("details")
+            if msg:
+                print(f"   Message: {msg}")
+            if details:
+                print(f"   Details: {details}")
+        except Exception:
+            if res.text:
+                print(f"   Server response: {res.text}")
+    except Exception as e:
+        print(f"❌ Exception while fetching topologies: {e}")
+    return []
+
+def fetch_topology_details(session, base_url, topology_id):
+    """
+    Fetch detailed information about a specific topology group, including its site assignments.
+    https://developer.cisco.com/docs/sd-wan/26-1/get-topology-group/
+    """
+    url = f"{base_url}/dataservice/v1/topology-group/{topology_id}"
+    try:
+        res = session.get(url, timeout=30)
+        if res.status_code == 200:
+            return res.json()
+        print(f"❌ Failed to fetch topology details (HTTP {res.status_code}).")
+    except Exception as e:
+        print(f"❌ Exception while fetching topology details: {e}")
+    return {}
+
+def update_topology_spoke_assignments(session, base_url, topology_id, assignments_payload):
+    """
+    Update spoke site assignments for devices in a topology group.
+    https://developer.cisco.com/docs/sd-wan/26-1/edit-topology-group/
+    
+    The API expects a minimal payload containing ONLY the 'sites' array.
+    Read-only fields (id, createdBy, etc.) and computed fields (numberOfDevices, etc.) 
+    are automatically rejected by the API schema.
+    """
+    # Create a minimal payload with ONLY the sites array
+    # The API will reject any other fields
+    minimal_payload = {
+        "sites": assignments_payload.get("sites", [])
+    }
+    
+    url = f"{base_url}/dataservice/v1/topology-group/{topology_id}"
+    try:
+        res = session.put(url, json=minimal_payload, timeout=30)
+        if res.status_code in [200, 201]:
+            print("✅ Topology group spoke assignments updated successfully.")
+            return True
+        else:
+            print(f"❌ Failed to update topology group (HTTP {res.status_code}).")
+            if res.text:
+                try:
+                    err_data = res.json()
+                    print(f"   Error: {err_data}")
+                except Exception:
+                    print(f"   Response: {res.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Exception while updating topology group: {e}")
+        return False
+
+def fetch_topology_spoke_assignments(session, base_url, topology_id):
+    """
+    Fetch current spoke site assignments for a topology group.
+    Returns a dict mapping device IDs to their current site assignments.
+    Handles the topology-group API response structure with sites array.
+    """
+    details = fetch_topology_details(session, base_url, topology_id)
+    if not details:
+        return {}
+    
+    assignments = {}
+    # Handle topology-group structure with 'sites' array
+    for site in details.get("sites", []):
+        site_id = site.get("siteId")
+        for device_id in site.get("devices", []):
+            if device_id:
+                assignments[device_id] = {
+                    "currentSiteId": site_id,
+                    "siteDetails": site
+                }
+    return assignments
+
 def _device_ids_equivalent(left, right):
     if not left or not right:
         return False

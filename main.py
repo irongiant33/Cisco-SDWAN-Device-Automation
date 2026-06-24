@@ -14,8 +14,10 @@ from config import (
     get_vmanage_target,
     get_cached_config_groups,
     get_cached_policy_groups,
+    get_cached_topologies,
     save_config_groups_cache,
     save_policy_groups_cache,
+    save_topologies_cache,
 )
 from sdwan_api import (
     initialize_active_session, 
@@ -28,6 +30,10 @@ from sdwan_api import (
     fetch_policy_group_associations,
     associate_policy_group,
     deploy_policy_group,
+    fetch_topologies,
+    fetch_topology_details,
+    fetch_topology_spoke_assignments,
+    update_topology_spoke_assignments,
     _get_expected_variables,
     build_config_group_device_map,
     build_policy_group_device_map,
@@ -392,6 +398,311 @@ def select_policy_group(session, base_url, policy_input=None):
         if group_id:
             return group_id, group_name
         print(f"⚠️ Policy group '{choice}' not found in local cache. Try again or run 'show_policy_groups'.")
+
+def _topology_display_name(topology):
+    return topology.get('name', 'N/A')
+
+def _find_topology(topologies, name_or_id):
+    for t in topologies:
+        t_id = t.get('id')
+        t_name = _topology_display_name(t)
+        if name_or_id in (t_name, t_id):
+            return t_id, t_name
+    if _is_uuid(name_or_id):
+        return name_or_id, name_or_id
+    return None, None
+
+def select_topology(session, base_url, topology_input=None):
+    """
+    Prompt for or resolve a topology using the local cache.
+    Returns (topology_id, topology_name) or (None, None) on cancel/failure.
+    """
+    if topology_input:
+        topology_input = topology_input.strip()
+        if not topology_input:
+            return None, None
+        topologies = get_cached_topologies(base_url)
+        if topologies is None:
+            if _is_uuid(topology_input):
+                return topology_input, topology_input
+            print("\nℹ️ No cached Topologies found for this environment.")
+            print("   Run 'show_topologies' to refresh the list from SD-WAN Manager.")
+            print(f"❌ Cannot resolve topology name '{topology_input}' without a local cache.")
+            return None, None
+        topology_id, topology_name = _find_topology(topologies, topology_input)
+        if not topology_id:
+            print(f"❌ Topology '{topology_input}' not found in local cache.")
+            print("   Run 'show_topologies' to refresh the list, then retry.")
+            return None, None
+        return topology_id, topology_name
+
+    topologies = get_cached_topologies(base_url)
+    if topologies is None:
+        print("\nℹ️ No cached Topologies found for this environment.")
+        print("   Run 'show_topologies' to refresh the list from SD-WAN Manager,")
+        print("   or enter a Topology UUID manually below.")
+        topology_input = input("\n🏷️ Enter Topology Name or UUID: ").strip()
+        if not topology_input:
+            print("❌ Selection canceled.")
+            return None, None
+        if _is_uuid(topology_input):
+            return topology_input, topology_input
+        print(f"❌ Cannot resolve topology name '{topology_input}' without a local cache.")
+        print("   Run 'show_topologies' first, then retry.")
+        return None, None
+
+    if not topologies:
+        print("ℹ️ Cached topology list is empty for this environment.")
+        topology_input = input("\n🏷️ Enter Topology Name or UUID: ").strip()
+        if not topology_input:
+            print("❌ Selection canceled.")
+            return None, None
+        if _is_uuid(topology_input):
+            return topology_input, topology_input
+        print(f"❌ Cannot resolve topology name '{topology_input}' without a local cache.")
+        return None, None
+
+    if len(topologies) > 20:
+        topology_input = input(
+            f"\n🏷️ {len(topologies)} topologies in cache. Enter Topology Name or UUID: "
+        ).strip()
+        if not topology_input:
+            print("❌ Selection canceled.")
+            return None, None
+        topology_id, topology_name = _find_topology(topologies, topology_input)
+        if not topology_id:
+            print(f"❌ Topology '{topology_input}' not found in local cache.")
+            print("   Run 'show_topologies' to refresh the list, then retry.")
+            return None, None
+        return topology_id, topology_name
+
+    print("\n📂 Available Topologies (from local cache):")
+    for idx, t in enumerate(topologies, 1):
+        name = _topology_display_name(t)
+        topology_type = t.get('type', 'N/A')
+        print(f" [{idx}] {name} (Type: {topology_type})")
+
+    while True:
+        choice = input(
+            f"\n👉 Select a Topology (1-{len(topologies)}) or enter a name/UUID: "
+        ).strip()
+        if not choice:
+            print("❌ Selection canceled.")
+            return None, None
+        if choice.isdigit():
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(topologies):
+                t = topologies[choice_idx]
+                return t.get('id'), _topology_display_name(t)
+            print(f"⚠️ Invalid entry. Please enter a number between 1 and {len(topologies)} or type a name/UUID.")
+            continue
+        topology_id, topology_name = _find_topology(topologies, choice)
+        if topology_id:
+            return topology_id, topology_name
+        print(f"⚠️ Topology '{choice}' not found in local cache. Try again or run 'show_topologies'.")
+
+def show_topologies(session, base_url):
+    """Fetch and display available topologies."""
+    print("\n📂 Fetching Topologies from SD-WAN Manager...")
+    try:
+        topologies = fetch_topologies(session, base_url)
+        save_topologies_cache(base_url, topologies)
+        print("💾 Cached topologies locally in sdwan_profiles.json.")
+        if not topologies:
+            print("ℹ️ No topologies discovered on this target environment.")
+            return
+        print(f"✅ Successfully retrieved {len(topologies)} Topology/Topologies:\n")
+        table_data = []
+        for t in topologies:
+            name = _topology_display_name(t)
+            topo_type = t.get('type', 'N/A')
+            topo_id = t.get('id', 'N/A')
+            description = t.get('description', 'N/A')
+            table_data.append([name, topo_type, description, topo_id])
+        print(tabulate(table_data, headers=["Topology Name", "Type", "Description", "UUID Matrix Key"], tablefmt="grid"))
+    except Exception as e:
+        print(f"❌ Failed to parse topologies array: {e}")
+
+def run_topology_spoke_update_pipeline(session, base_url, csv_path=None, topology_input=None):
+    """
+    Main pipeline for updating topology spoke assignments from CSV.
+    """
+    res = load_manifest_csv(csv_path)
+    if not res or not res[0]:
+        return
+    devices_payload, csv_headers, csv_filename = res
+
+    topology_id, topology_name = select_topology(session, base_url, topology_input)
+    if not topology_id:
+        return
+
+    target_device_ids = [d["deviceId"] for d in devices_payload]
+    
+    # Determine the Site ID column from CSV
+    site_id_column = None
+    possible_columns = ["Site Id", "site-id", "site_id", "siteId", "Site"]
+    for col in possible_columns:
+        if col in csv_headers:
+            site_id_column = col
+            break
+    
+    if not site_id_column:
+        print(f"\n❌ Error: CSV must contain a 'Site Id' column (or variant: {', '.join(possible_columns)})")
+        print(f"   Available columns: {', '.join(csv_headers)}")
+        return
+
+    print(f"\n🔍 Checking current topology spoke assignments for {len(target_device_ids)} device(s)...")
+    current_assignments = fetch_topology_spoke_assignments(session, base_url, topology_id)
+
+    # Determine current and desired site assignments
+    desired_assignments = {}
+    for device in devices_payload:
+        device_id = device["deviceId"]
+        desired_site_id = device["raw_row"].get(site_id_column, "").strip()
+        if desired_site_id:
+            desired_assignments[device_id] = desired_site_id
+
+    # Identify conflicts (devices where current site differs from desired site)
+    conflicts = {}
+    non_conflicts = []
+    missing_devices = []
+
+    for device_id in target_device_ids:
+        if device_id not in current_assignments:
+            missing_devices.append(device_id)
+        else:
+            current_site = current_assignments[device_id].get("currentSiteId", "Unknown")
+            desired_site = desired_assignments.get(device_id, "N/A")
+            
+            if current_site != desired_site:
+                conflicts[device_id] = {
+                    "current": current_site,
+                    "desired": desired_site
+                }
+            else:
+                non_conflicts.append(device_id)
+
+    # Print conflict summary
+    total_count = len(target_device_ids)
+    conflict_count = len(conflicts)
+
+    if conflict_count > 0:
+        print("\n⚠️  DEVICE TOPOLOGY SPOKE SITE CONFLICTS DETECTED:")
+        conflict_table = [
+            [dev_id, conflicts[dev_id]["current"], conflicts[dev_id]["desired"]]
+            for dev_id in conflicts.keys()
+        ]
+        print(tabulate(conflict_table, headers=["Device ID", "Current Site", "Desired Site"], tablefmt="grid"))
+
+    if non_conflicts:
+        print("\n✅ DEVICES WITHOUT TOPOLOGY SPOKE SITE CONFLICTS:")
+        non_conflict_table = [[dev_id] for dev_id in non_conflicts]
+        print(tabulate(non_conflict_table, headers=["Device ID"], tablefmt="grid"))
+    else:
+        if conflict_count > 0:
+            print("\nℹ️ No devices without a conflict; all targeted devices have differing site assignments.")
+
+    if missing_devices:
+        print(f"\n⚠️ {len(missing_devices)} device(s) not currently in topology: {', '.join(missing_devices[:5])}")
+
+    print(f"\n📊 Conflict summary: {conflict_count}/{total_count} device(s) in the CSV have a topology spoke site conflict.")
+
+    if conflict_count == 0 and not missing_devices:
+        print("✅ All devices are already assigned to the correct spoke sites.")
+        return
+    
+    if conflict_count == 0 and missing_devices:
+        print(f"ℹ️ No conflicts detected, but {len(missing_devices)} device(s) need to be added to the topology.")
+
+    # Conflict resolution prompt (only show if there are conflicts to resolve)
+    if conflict_count > 0:
+        print("\nConflict Resolution Options:")
+        print(" [1] Stop (abort)")
+        print(" [2] Update all conflicting devices with desired site assignments")
+        print(" [3] Review device-by-device")
+
+        while True:
+            choice = input("\n👉 Select conflict resolution option (1-3): ").strip()
+            if choice in ["1", "2", "3"]:
+                break
+            print("⚠️ Invalid entry. Please choose 1, 2, or 3.")
+
+        if choice == "1":
+            print("❌ Update aborted by user choice.")
+            return
+
+        devices_to_update = []
+
+        if choice == "2":
+            # Auto-update all conflicts
+            devices_to_update = [
+                {"deviceId": dev_id, "siteId": conflicts[dev_id]["desired"]}
+                for dev_id in conflicts.keys()
+            ]
+        elif choice == "3":
+            # Device-by-device review
+            for dev_id in conflicts.keys():
+                current = conflicts[dev_id]["current"]
+                desired = conflicts[dev_id]["desired"]
+                while True:
+                    ans = input(f"\n👉 Move device '{dev_id}' from site '{current}' to site '{desired}'? (y/n): ").strip().lower()
+                    if ans in ['y', 'n']:
+                        break
+                    print("⚠️ Invalid entry. Enter 'y' or 'n'.")
+                
+                if ans == 'y':
+                    devices_to_update.append({"deviceId": dev_id, "siteId": desired})
+                else:
+                    print(f"ℹ️ Skipping device '{dev_id}' (retains site '{current}').")
+    else:
+        # No conflicts, initialize devices_to_update for missing devices
+        devices_to_update = []
+
+    # Add any missing devices to the update list
+    for dev_id in missing_devices:
+        if dev_id in desired_assignments:
+            devices_to_update.append({"deviceId": dev_id, "siteId": desired_assignments[dev_id]})
+
+    if not devices_to_update:
+        print("ℹ️ No devices selected for update. Operation stopped.")
+        return
+
+    print(f"\n🚀 Updating {len(devices_to_update)} device(s) to new spoke site assignment(s)...")
+    
+    # Fetch current topology group structure
+    topology_group = fetch_topology_details(session, base_url, topology_id)
+    if not topology_group:
+        print("❌ Failed to fetch current topology group structure. Cannot proceed with update.")
+        return
+    
+    # Update the topology group structure with new site assignments
+    # The API expects the full topology group object with modified site assignments
+    if "sites" in topology_group:
+        # Update site assignments within the topology group structure
+        for device_update in devices_to_update:
+            dev_id = device_update["deviceId"]
+            new_site_id = device_update["siteId"]
+            
+            # Find and update the device in the sites structure
+            for site in topology_group.get("sites", []):
+                if dev_id in site.get("devices", []):
+                    site["devices"].remove(dev_id)
+                    if not site["devices"]:
+                        # Remove empty site
+                        topology_group["sites"].remove(site)
+            
+            # Add device to new site
+            for site in topology_group.get("sites", []):
+                if str(site.get("siteId")) == str(new_site_id):
+                    if dev_id not in site.get("devices", []):
+                        site["devices"].append(dev_id)
+                    break
+    
+    success = update_topology_spoke_assignments(session, base_url, topology_id, topology_group)
+    if success:
+        print(f"\n✅ Topology group spoke assignments updated successfully for {len(devices_to_update)} device(s)!")
+    else:
+        print("\n❌ Failed to update topology group. Check the error messages above.")
 
 def run_association_pipeline(session, base_url, csv_path=None, group_name=None):
     res = load_manifest_csv(csv_path)
@@ -850,6 +1161,21 @@ class SDWANShell(cmd.Cmd):
         args = shlex.split(arg)
         csv_path = args[0] if len(args) > 0 else None
         run_device_status_report(self.session, self.base_url, csv_path)
+
+    def do_show_topologies(self, arg):
+        """Fetch & List All Topologies. Stores a cached copy in sdwan_profiles.json.
+        Usage: show_topologies
+        """
+        show_topologies(self.session, self.base_url)
+
+    def do_update_topology_spokes(self, arg):
+        """Update Topology Spoke Site Assignments for Devices from CSV.
+        Usage: update_topology_spokes [csv_path] [topology_name_or_uuid]
+        """
+        args = shlex.split(arg)
+        csv_path = args[0] if len(args) > 0 else None
+        topology_input = args[1] if len(args) > 1 else None
+        run_topology_spoke_update_pipeline(self.session, self.base_url, csv_path, topology_input)
 
     def do_clear(self, arg):
         """Clear the terminal output.

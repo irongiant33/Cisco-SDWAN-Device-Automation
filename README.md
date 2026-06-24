@@ -94,10 +94,10 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 
 - [ ] Separate the deploy_policy function into an associate and deploy step, just like with the configuration groups. OR add the ability to check and verify-reassociation just like for the associate devices with a configuration group step. 
 - [ ] Add check to CSV upload step where if the CSV is larger than 100 devices to break into multiple CSV files to ensure parsability be the UI
-- [ ] when there are device configuration group conflicts detected, when printing out the table, also print out a table of the devices where there is not a conflict (if any) and print out a statistic of how many devices in the CSV had a configuration group conflict out of the total number of devices in the CSV
 
 ## Done
 
+- [x] when there are device configuration group conflicts detected, when printing out the table, also print out a table of the devices where there is not a conflict (if any) and print out a statistic of how many devices in the CSV had a configuration group conflict out of the total number of devices in the CSV
 - [x] check schema mappings file when auditing variables. Ask if you want to preserve the mapping or change it.
 - [x] schema mappings should be per CSV per configuration group. Not just per CSV
 - [x] add the ability to check on the status of devices. Should be able to use a CSV file just like for other devices. The result of this output should show a table of devices from the CSV file, what configuration group they are associated with, what policy group they are associated with, its reachability, and the device status (in sync, sync pending, out of sync). At the end of the table, it should give a summary of the number of devices in each configuration group, number of devices in each policy group, number of reachable devices, number of unreachable devices, number of devices in sync, out of sync, and sync pending. 

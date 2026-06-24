@@ -4,6 +4,7 @@ import json
 PROFILES_FILE = "sdwan_profiles.json"
 CONFIG_GROUPS_CACHE_KEY = "config_groups_cache"
 POLICY_GROUPS_CACHE_KEY = "policy_groups_cache"
+TOPOLOGIES_CACHE_KEY = "topologies_cache"
 
 def _profile_key(profiles, base_url):
     key = base_url.rstrip('/')
@@ -100,4 +101,20 @@ def update_profile_tokens(base_url, username, refresh_token):
         profiles[key] = {}
     profiles[key]["username"] = username
     profiles[key]["refresh_token"] = refresh_token
+    save_profiles(profiles)
+
+def get_cached_topologies(base_url):
+    """Return cached topologies for an environment, or None if never refreshed."""
+    profiles = load_profiles()
+    profile = profiles.get(_profile_key(profiles, base_url), {})
+    if TOPOLOGIES_CACHE_KEY not in profile:
+        return None
+    return profile[TOPOLOGIES_CACHE_KEY]
+
+def save_topologies_cache(base_url, topologies):
+    profiles = load_profiles()
+    key = _profile_key(profiles, base_url)
+    if key not in profiles:
+        profiles[key] = {}
+    profiles[key][TOPOLOGIES_CACHE_KEY] = topologies
     save_profiles(profiles)
