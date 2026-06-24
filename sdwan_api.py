@@ -442,10 +442,23 @@ def associate_devices(session, base_url, group_id, devices_payload):
                         table_data = []
                         for dev_id, cur_grp in conflicts.items():
                             table_data.append([dev_id, cur_grp, proposed_group_name])
-                            
+                        
+                        non_conflict_table_data = [
+                            [d["deviceId"]] for d in devices_payload if d["deviceId"] not in conflicts
+                        ]
+                        total_devices = len(devices_payload)
+                        conflict_count = len(conflicts)
+
                         print("\n⚠️  DEVICE CONFIGURATION GROUP CONFLICTS DETECTED:")
                         print(tabulate(table_data, headers=["Device ID", "Current Group", "Proposed Group"], tablefmt="grid"))
                         
+                        if non_conflict_table_data:
+                            print("\n✅ DEVICES WITHOUT CONFIGURATION GROUP CONFLICTS:")
+                            print(tabulate(non_conflict_table_data, headers=["Device ID"], tablefmt="grid"))
+                        else:
+                            print("\nℹ️ No devices without a conflict; all targeted devices are involved in the conflict.")
+
+                        print(f"\n📊 Conflict summary: {conflict_count}/{total_devices} device(s) in the CSV had a configuration group conflict.")
                         print("\nConflict Resolution Options:")
                         print(" [1] Stop association (abort)")
                         print(" [2] Associate all devices in the table with the new group (auto-override)")
