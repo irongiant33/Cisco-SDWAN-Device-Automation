@@ -2,7 +2,11 @@ import time
 import getpass
 import urllib3
 import requests
-from config import load_profiles, save_profiles
+from config import (
+    load_profiles,
+    get_cached_config_groups,
+    update_profile_tokens,
+)
 import re
 from tabulate import tabulate
 
@@ -50,9 +54,7 @@ def initialize_active_session(base_url, username, profile_data=None):
         new_refresh = refresh_jwt_access(session, base_url, profile_data['refresh_token'])
         if new_refresh:
             print("✨ Re-bound cleanly! Re-established Bearer Authorization.")
-            profiles = load_profiles()
-            profiles[base_url] = {"username": username, "refresh_token": new_refresh}
-            save_profiles(profiles)
+            update_profile_tokens(base_url, username, new_refresh)
             return session
         print("⚠️ Stored refresh token expired. Prompting credentials...")
 
@@ -77,9 +79,7 @@ def initialize_active_session(base_url, username, profile_data=None):
         if xsrf:
             session.headers.update({'X-XSRF-TOKEN': xsrf})
             
-        profiles = load_profiles()
-        profiles[base_url] = {"username": username, "refresh_token": data.get("refresh")}
-        save_profiles(profiles)
+        update_profile_tokens(base_url, username, data.get("refresh"))
         
         print("🔒 Session cache validated and refresh token pinned.")
         return session
@@ -119,9 +119,17 @@ def fetch_config_groups(session, base_url, debug=False):
     return []
 
 def get_config_group_id(session, base_url, name, debug=False):
+    cached = get_cached_config_groups(base_url)
+    if cached is not None:
+        for g in cached:
+            if g.get('name') == name or g.get('configGroupName') == name:
+                return g.get('id') or g.get('configGroupId')
+            g_id = g.get('id') or g.get('configGroupId')
+            if g_id == name:
+                return g_id
     try:
         groups = fetch_config_groups(session, base_url, debug)
-        if(debug):
+        if debug:
             print(f"{groups=}")
         for g in groups:
             if g.get('name') == name or g.get('configGroupName') == name:

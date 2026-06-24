@@ -1,10 +1,10 @@
 # Cisco Catalyst SD-WAN Configuration Group Automation Engine
 
-This Python-based command-line interface (CLI) automation suite simplifies and speeds up deploying devices to **Configuration Groups** in Cisco Catalyst SD-WAN Manager (formerly vManage), matching the modern UX 2.0 / Release 26.x API specifications. Alternatively, you can consider the use of this tool: https://github.com/CiscoDevNet/sastre
+This Python-based command-line interface (CLI) automation suite simplifies and speeds up deploying devices to **Configuration Groups** in Cisco Catalyst SD-WAN Manager (formerly vManage), matching the modern UX 2.0 / Release 26.x API specifications. Alternatively, you can consider the use of this tool: [https://github.com/CiscoDevNet/sastre](https://github.com/CiscoDevNet/sastre)
 
 Instead of configuring devices one by one in a web interface, this tool allows you to bulk-associate and bulk-deploy a matrix of system edge routers using a standard input CSV manifest file.
 
-Cisco SD-WAN API Reference: https://developer.cisco.com/docs/sdwan/introduction/
+Cisco SD-WAN API Reference: [https://developer.cisco.com/docs/sdwan/introduction/](https://developer.cisco.com/docs/sdwan/introduction/)
 
 ---
 
@@ -21,12 +21,14 @@ Cisco SD-WAN API Reference: https://developer.cisco.com/docs/sdwan/introduction/
 ## 📁 File Structure
 
 Keep these files in the exact same execution directory folder:
+
 ```text
 sdwan_automation/
 ├── config.py            # Handles loading/saving profiles and localized storage maps
 ├── sdwan_api.py         # Interrogates endpoints, manages tokens, and handles HTTP execution
 ├── main.py              # Houses the terminal display, processes CSV arrays, and handles metrics
-└── sdwan_profiles.json  # Generated automatically on run to track saved environments
+├── sdwan_profiles.json  # Generated automatically on run to track saved environments
+├── schema_mappings.json # Maps CSV column names to configuration group variable keys
 └── migration_csv.csv    # Spreadsheet containing variables for routers to configure
 ```
 
@@ -65,7 +67,7 @@ python main.py
 
 ## 📊 Input CSV Layout Schema Requirement
 
-For associating devices to configuration groups and policy groups, and deploying variables, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses **`Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
+For associating devices to configuration groups and policy groups, and deploying variables, ensure your source spreadsheet is saved in standard CSV structure format using exact column naming logic. The engine uses `**Device ID`** to tie variables to a target router, while all remaining columns populate matching template keys:
 
 ```csv
 Device ID,System IP,Host Name,Site Id,Dual Stack IPv6 Default,admin_username,admin_user_password
@@ -81,7 +83,6 @@ Device ID,Rollback Timer (sec),System IP,Host Name,Site Id,Dual Stack IPv6 Defau
 
 Alternatively, you can get a CSV by navigating to a configuration group in SD-WAN Manager's GUI, selecting the 3 dots next to the configuration group name, and selecting "Export". As long as there are some devices deployed, it will give you an idea of the example CSV format.
 
-
 ## ⚠️ Shortcomings & Current Limitations
 
 1. **Scale Testing**: The engine has not been tested on multiple concurrent routers in the CSV manifest file yet.
@@ -90,10 +91,14 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 ---
 
 ## TODO
+
 - [ ] check schema mappings file when auditing variables. Ask if you want to preserve the mapping or change it.
 - [ ] schema mappings should be per CSV per configuration group. Not just per CSV
 
 ## Done
+
+- [x] instead of requiring multiple functions to use the function get_config_group_id after a user inputs the string, make this a separate function similar to loading the CSV. The user should have the option to select from a list of configuration groups or enter their own configuration group. If there are over 20 configuration groups, just prompt the user to enter it via full string
+
 - [x] add option at the end of the deployment stage to associate & deploy routers to a policy group
 - [x] Sometimes I receive the error "Configuration Group matching name 'ITS_Demo_1101' not discovered on environment." even though the configuration group definitely exists. I've found that running option 3 to fetch all config groups and then re-running this gets rid of the error, but I should figure out why this error exists.
 - [x] I should handle this error more gracefully because it is not really an error since the device already exists: ❌ Configuration Group association payload rejected (HTTP 400): {"error":{"message":"Config Group Association error","code":"CFGRP0018","details":"GenericGroup-ASSOCIATION validation : Device(s) already associated to group(s), device(s)-group(s): {IR1101-K9-FVH3002L7U6=ITS_Demo_1101}","type":"error"}}
@@ -107,17 +112,20 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 
 The following Cisco Catalyst SD-WAN developer documentation and endpoints are referenced and utilized within this codebase:
 
-| Component / Action | HTTP Method | API Endpoint | Documentation Link |
-| :--- | :--- | :--- | :--- |
-| **Authentication & Tokens** | POST | `/jwt/login` & `/jwt/refresh` | [API Docs](https://developer.cisco.com/docs/sdwan/authentication/#authentication) |
-| **Device Inventory** | GET | `/dataservice/device` | [API Docs](https://developer.cisco.com/docs/sdwan/getting-started/#get-the-list-of-devices) |
-| **Get Configuration Groups** | GET | `/dataservice/v1/config-group` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-by-solution/) |
-| **Get Policy Groups** | GET | `/dataservice/v1/policy-group` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-policy-group-by-solution/) |
-| **Get Group Expected Variables** | GET | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-device-variables/) |
-| **Associate Config Group** | POST | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/) |
-| **Dissociate Config Group** | DELETE | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/delete-config-group-association/) |
-| **Create Device Variables** | POST | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/) |
-| **Deploy Config Group** | POST | `/dataservice/v1/config-group/{groupId}/device/deploy` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-config-group/) |
-| **Poll Task Status** | GET | `/dataservice/device/action/status/{taskId}` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/find-status/) |
-| **Associate Policy Group** | POST | `/dataservice/v1/policy-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-policy-group-association/) |
-| **Deploy Policy Group** | POST | `/dataservice/v1/policy-group/{groupId}/device/deploy` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-policy-group/) |
+
+| Component / Action               | HTTP Method | API Endpoint                                              | Documentation Link                                                                             |
+| -------------------------------- | ----------- | --------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Authentication & Tokens**      | POST        | `/jwt/login` & `/jwt/refresh`                             | [API Docs](https://developer.cisco.com/docs/sdwan/authentication/#authentication)              |
+| **Device Inventory**             | GET         | `/dataservice/device`                                     | [API Docs](https://developer.cisco.com/docs/sdwan/getting-started/#get-the-list-of-devices)    |
+| **Get Configuration Groups**     | GET         | `/dataservice/v1/config-group`                            | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-by-solution/)         |
+| **Get Policy Groups**            | GET         | `/dataservice/v1/policy-group`                            | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-policy-group-by-solution/)         |
+| **Get Group Expected Variables** | GET         | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-device-variables/)    |
+| **Associate Config Group**       | POST        | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-association/)      |
+| **Dissociate Config Group**      | DELETE      | `/dataservice/v1/config-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/delete-config-group-association/)      |
+| **Create Device Variables**      | POST        | `/dataservice/v1/config-group/{groupId}/device/variables` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-config-group-device-variables/) |
+| **Deploy Config Group**          | POST        | `/dataservice/v1/config-group/{groupId}/device/deploy`    | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-config-group/)                  |
+| **Poll Task Status**             | GET         | `/dataservice/device/action/status/{taskId}`              | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/find-status/)                          |
+| **Associate Policy Group**       | POST        | `/dataservice/v1/policy-group/{groupId}/device/associate` | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/create-policy-group-association/)      |
+| **Deploy Policy Group**          | POST        | `/dataservice/v1/policy-group/{groupId}/device/deploy`    | [API Docs](https://developer.cisco.com/docs/sd-wan/26-1/deploy-policy-group/)                  |
+
+

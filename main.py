@@ -6,14 +6,20 @@ import os
 import cmd
 import shlex
 import glob
+import re
 from tabulate import tabulate
 
-from config import get_vmanage_target
+from config import (
+    get_vmanage_target,
+    get_cached_config_groups,
+    get_cached_policy_groups,
+    save_config_groups_cache,
+    save_policy_groups_cache,
+)
 from sdwan_api import (
     initialize_active_session, 
     fetch_devices, 
     fetch_config_groups, 
-    get_config_group_id, 
     associate_devices,
     deploy_device_variables, 
     poll_task_status,
@@ -25,6 +31,10 @@ from sdwan_api import (
 )
 
 MAPPINGS_FILE = "schema_mappings.json"
+UUID_PATTERN = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.I,
+)
 
 def load_local_mappings():
     if os.path.exists(MAPPINGS_FILE):
@@ -56,6 +66,8 @@ def show_config_groups(session, base_url):
     print("\n📂 Fetching Configuration Groups list matrix from SD-WAN Manager...")
     try:
         groups = fetch_config_groups(session, base_url)
+        save_config_groups_cache(base_url, groups)
+        print("💾 Cached configuration groups locally in sdwan_profiles.json.")
         if not groups:
             print("ℹ️ No configuration groups discovered on this target environment.")
             return
@@ -75,6 +87,8 @@ def show_policy_groups(session, base_url):
     print("\n📂 Fetching Policy Groups matrix layer from SD-WAN Manager...")
     try:
         groups = fetch_policy_groups(session, base_url)
+        save_policy_groups_cache(base_url, groups)
+        print("💾 Cached policy groups locally in sdwan_profiles.json.")
         if not groups:
             print("ℹ️ No Policy Groups discovered on this target environment.")
             return
@@ -143,17 +157,216 @@ def load_manifest_csv(csv_path=None):
         })
     return devices_payload, headers, os.path.basename(csv_path)
 
+def _config_group_display_name(group):
+    return group.get('name') or group.get('configGroupName', 'N/A')
+
+def _policy_group_display_name(group):
+    return group.get('name', 'N/A')
+
+def _is_uuid(value):
+    return bool(UUID_PATTERN.match(value))
+
+def _find_config_group(groups, name_or_id):
+    for g in groups:
+        g_id = g.get('id') or g.get('configGroupId')
+        g_name = _config_group_display_name(g)
+        if name_or_id in (g_name, g_id):
+            return g_id, g_name
+    if _is_uuid(name_or_id):
+        return name_or_id, name_or_id
+    return None, None
+
+def _find_policy_group(groups, name_or_id):
+    for g in groups:
+        g_id = g.get('id')
+        g_name = _policy_group_display_name(g)
+        if name_or_id in (g_name, g_id):
+            return g_id, g_name
+    if _is_uuid(name_or_id):
+        return name_or_id, name_or_id
+    return None, None
+
+def _prompt_manual_config_group():
+    print("\nℹ️ No cached Configuration Groups found for this environment.")
+    print("   Run 'show_config_groups' to refresh the list from SD-WAN Manager,")
+    print("   or enter a Configuration Group UUID manually below.")
+    group_input = input("\n🏷️ Enter Configuration Group Name or UUID: ").strip()
+    if not group_input:
+        print("❌ Selection canceled.")
+        return None, None
+    if _is_uuid(group_input):
+        return group_input, group_input
+    print(f"❌ Cannot resolve configuration group name '{group_input}' without a local cache.")
+    print("   Run 'show_config_groups' first, then retry.")
+    return None, None
+
+def _prompt_manual_policy_group():
+    print("\nℹ️ No cached Policy Groups found for this environment.")
+    print("   Run 'show_policy_groups' to refresh the list from SD-WAN Manager,")
+    print("   or enter a Policy Group UUID manually below.")
+    policy_input = input("\n🏷️ Enter Policy Group Name or UUID: ").strip()
+    if not policy_input:
+        print("❌ Selection canceled.")
+        return None, None
+    if _is_uuid(policy_input):
+        return policy_input, policy_input
+    print(f"❌ Cannot resolve policy group name '{policy_input}' without a local cache.")
+    print("   Run 'show_policy_groups' first, then retry.")
+    return None, None
+
+def select_config_group(session, base_url, group_input=None):
+    """
+    Prompt for or resolve a configuration group using the local cache.
+    Returns (group_id, group_name) or (None, None) on cancel/failure.
+    """
+    if group_input:
+        group_input = group_input.strip()
+        if not group_input:
+            return None, None
+        groups = get_cached_config_groups(base_url)
+        if groups is None:
+            if _is_uuid(group_input):
+                return group_input, group_input
+            print("\nℹ️ No cached Configuration Groups found for this environment.")
+            print("   Run 'show_config_groups' to refresh the list from SD-WAN Manager.")
+            print(f"❌ Cannot resolve configuration group name '{group_input}' without a local cache.")
+            return None, None
+        group_id, group_name = _find_config_group(groups, group_input)
+        if not group_id:
+            print(f"❌ Configuration group '{group_input}' not found in local cache.")
+            print("   Run 'show_config_groups' to refresh the list, then retry.")
+            return None, None
+        return group_id, group_name
+
+    groups = get_cached_config_groups(base_url)
+    if groups is None:
+        return _prompt_manual_config_group()
+
+    if not groups:
+        print("ℹ️ Cached configuration group list is empty for this environment.")
+        return _prompt_manual_config_group()
+
+    if len(groups) > 20:
+        group_input = input(
+            f"\n🏷️ {len(groups)} configuration groups in cache. Enter Configuration Group Name or UUID: "
+        ).strip()
+        if not group_input:
+            print("❌ Selection canceled.")
+            return None, None
+        group_id, group_name = _find_config_group(groups, group_input)
+        if not group_id:
+            print(f"❌ Configuration group '{group_input}' not found in local cache.")
+            print("   Run 'show_config_groups' to refresh the list, then retry.")
+            return None, None
+        return group_id, group_name
+
+    print("\n📂 Available Configuration Groups (from local cache):")
+    for idx, g in enumerate(groups, 1):
+        name = _config_group_display_name(g)
+        solution = g.get('solution', 'N/A')
+        print(f" [{idx}] {name} ({solution})")
+
+    while True:
+        choice = input(
+            f"\n👉 Select a Configuration Group (1-{len(groups)}) or enter a name/UUID: "
+        ).strip()
+        if not choice:
+            print("❌ Selection canceled.")
+            return None, None
+        if choice.isdigit():
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(groups):
+                g = groups[choice_idx]
+                return g.get('id') or g.get('configGroupId'), _config_group_display_name(g)
+            print(f"⚠️ Invalid entry. Please enter a number between 1 and {len(groups)} or type a name/UUID.")
+            continue
+        group_id, group_name = _find_config_group(groups, choice)
+        if group_id:
+            return group_id, group_name
+        print(f"⚠️ Configuration group '{choice}' not found in local cache. Try again or run 'show_config_groups'.")
+
+def select_policy_group(session, base_url, policy_input=None):
+    """
+    Prompt for or resolve a policy group using the local cache.
+    Returns (policy_group_id, policy_group_name) or (None, None) on cancel/failure.
+    """
+    if policy_input:
+        policy_input = policy_input.strip()
+        if not policy_input:
+            return None, None
+        groups = get_cached_policy_groups(base_url)
+        if groups is None:
+            if _is_uuid(policy_input):
+                return policy_input, policy_input
+            print("\nℹ️ No cached Policy Groups found for this environment.")
+            print("   Run 'show_policy_groups' to refresh the list from SD-WAN Manager.")
+            print(f"❌ Cannot resolve policy group name '{policy_input}' without a local cache.")
+            return None, None
+        group_id, group_name = _find_policy_group(groups, policy_input)
+        if not group_id:
+            print(f"❌ Policy group '{policy_input}' not found in local cache.")
+            print("   Run 'show_policy_groups' to refresh the list, then retry.")
+            return None, None
+        return group_id, group_name
+
+    groups = get_cached_policy_groups(base_url)
+    if groups is None:
+        return _prompt_manual_policy_group()
+
+    if not groups:
+        print("ℹ️ Cached policy group list is empty for this environment.")
+        return _prompt_manual_policy_group()
+
+    if len(groups) > 20:
+        policy_input = input(
+            f"\n🏷️ {len(groups)} policy groups in cache. Enter Policy Group Name or UUID: "
+        ).strip()
+        if not policy_input:
+            print("❌ Selection canceled.")
+            return None, None
+        group_id, group_name = _find_policy_group(groups, policy_input)
+        if not group_id:
+            print(f"❌ Policy group '{policy_input}' not found in local cache.")
+            print("   Run 'show_policy_groups' to refresh the list, then retry.")
+            return None, None
+        return group_id, group_name
+
+    print("\n📂 Available Policy Groups (from local cache):")
+    for idx, g in enumerate(groups, 1):
+        name = _policy_group_display_name(g)
+        desc = g.get('description', 'N/A')
+        print(f" [{idx}] {name} ({desc})")
+
+    while True:
+        choice = input(
+            f"\n👉 Select a Policy Group (1-{len(groups)}) or enter a name/UUID: "
+        ).strip()
+        if not choice:
+            print("❌ Selection canceled.")
+            return None, None
+        if choice.isdigit():
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(groups):
+                g = groups[choice_idx]
+                return g.get('id'), _policy_group_display_name(g)
+            print(f"⚠️ Invalid entry. Please enter a number between 1 and {len(groups)} or type a name/UUID.")
+            continue
+        group_id, group_name = _find_policy_group(groups, choice)
+        if group_id:
+            return group_id, group_name
+        print(f"⚠️ Policy group '{choice}' not found in local cache. Try again or run 'show_policy_groups'.")
+
 def run_association_pipeline(session, base_url, csv_path=None, group_name=None):
     res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, _, _ = res
-        
-    if not group_name:
-        group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
-    group_id = get_config_group_id(session, base_url, group_name)
-    
-    print(f"\n🚀 Phase 1: Associating structural layout mappings for {len(devices_payload)} nodes...")
+
+    group_id, group_name = select_config_group(session, base_url, group_name)
+    if not group_id:
+        return
+
+    print(f"\n🚀 Phase 1: Associating structural layout mappings for {len(devices_payload)} nodes to '{group_name}'...")
     success = associate_devices(session, base_url, group_id, devices_payload)
     if success:
         print("🎉 Devices successfully linked inside the configuration group roster.")
@@ -170,13 +383,10 @@ def test_fetch_expected_variables(session, base_url, csv_path=None, target_input
         return
     devices_payload, csv_headers, csv_filename = res
 
-    if not target_input:
-        target_input = input("🏷️ Enter Configuration Group Name or UUID: ").strip()
-    if not target_input:
-        print("❌ Invalid input provided.")
+    group_id, group_name = select_config_group(session, base_url, target_input)
+    if not group_id:
         return
-    group_id = get_config_group_id(session, base_url, target_input)
-    print(f"🔍 Fetching variable schema rules for Group: {group_id}...")
+    print(f"🔍 Fetching variable schema rules for Group '{group_name}' ({group_id})...")
     
     expected_vars = _get_expected_variables(session, base_url, group_id)
     if not expected_vars:
@@ -281,17 +491,17 @@ def run_config_deployment_pipeline(session, base_url, csv_path=None, group_name=
     if not res or not res[0]:
         return
     devices_payload, _, csv_filename = res
-        
-    if not group_name:
-        group_name = input("🏷️ Enter target Configuration Group Name: ").strip()
-    group_id = get_config_group_id(session, base_url, group_name)
-    
+
+    group_id, group_name = select_config_group(session, base_url, group_name)
+    if not group_id:
+        return
+
     all_saved_mappings = load_local_mappings()
     custom_mappings = all_saved_mappings.get(csv_filename, {})
     if custom_mappings:
         print(f"📋 Loaded {len(custom_mappings)} active custom layout column mapping rules from storage cache.")
 
-    print(f"\n🚀 Phase 2: Processing and pushing variable deployment matrices...")
+    print(f"\n🚀 Phase 2: Processing and pushing variable deployment matrices to '{group_name}'...")
     task_id = deploy_device_variables(session, base_url, group_id, devices_payload, custom_mappings=custom_mappings)
     
     if task_id:
@@ -304,34 +514,18 @@ def run_config_deployment_pipeline(session, base_url, csv_path=None, group_name=
     else:
         print("❌ Automation failed to initialize deployment variables execution task.")
 
-def get_policy_group_id(session, base_url, name):
-    """Translates user-provided text name into vManage policy group UUID."""
-    try:
-        groups = fetch_policy_groups(session, base_url)
-        for g in groups:
-            if g.get('name') == name:
-                return g.get('id')
-    except Exception:
-        pass
-    return None
-
 def run_policy_deployment_pipeline(session, base_url, csv_path=None, policy_input=None):
     res = load_manifest_csv(csv_path)
     if not res or not res[0]:
         return
     devices_payload, _, _ = res
 
-    if not policy_input:
-        policy_input = input("\n🏷️ Enter target Policy Group Name or UUID: ").strip()
-    if not policy_input:
-        print("❌ Invalid entry. Cancelling policy migration phase.")
+    policy_group_id, policy_group_name = select_policy_group(session, base_url, policy_input)
+    if not policy_group_id:
         return
-
-    # Look up Policy Group Name to convert into the mandatory validation UUID string
-    policy_group_id = get_policy_group_id(session, base_url, policy_input)
         
     device_ids = [d["deviceId"] for d in devices_payload]
-    print("\n🔍 Checking existing Policy Group associations across the target edge pool...")
+    print(f"\n🔍 Checking existing Policy Group associations for '{policy_group_name}' across the target edge pool...")
     all_assocs = fetch_policy_group_associations(session, base_url, policy_group_id)
     existing_mappings = {}
     for record in all_assocs:
@@ -412,13 +606,13 @@ class SDWANShell(cmd.Cmd):
         test_connectivity(self.session, self.base_url)
 
     def do_show_config_groups(self, arg):
-        """Fetch & List All SD-WAN Configuration Groups.
+        """Fetch & List All SD-WAN Configuration Groups. Stores a cached copy in sdwan_profiles.json.
         Usage: show_config_groups
         """
         show_config_groups(self.session, self.base_url)
 
     def do_show_policy_groups(self, arg):
-        """Fetch & List All SD-WAN Policy Groups.
+        """Fetch & List All SD-WAN Policy Groups. Stores a cached copy in sdwan_profiles.json.
         Usage: show_policy_groups
         """
         show_policy_groups(self.session, self.base_url)

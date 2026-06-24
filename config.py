@@ -2,6 +2,16 @@ import os
 import json
 
 PROFILES_FILE = "sdwan_profiles.json"
+CONFIG_GROUPS_CACHE_KEY = "config_groups_cache"
+POLICY_GROUPS_CACHE_KEY = "policy_groups_cache"
+
+def _profile_key(profiles, base_url):
+    key = base_url.rstrip('/')
+    if key in profiles:
+        return key
+    if base_url in profiles:
+        return base_url
+    return key
 
 def load_profiles():
     """Reads saved environments and refresh tokens from the local JSON layer."""
@@ -49,3 +59,45 @@ def get_vmanage_target():
         
     username = input("👤 Enter RBAC Account Username: ").strip()
     return base_url, username, None
+
+def get_cached_config_groups(base_url):
+    """Return cached config groups for an environment, or None if never refreshed."""
+    profiles = load_profiles()
+    profile = profiles.get(_profile_key(profiles, base_url), {})
+    if CONFIG_GROUPS_CACHE_KEY not in profile:
+        return None
+    return profile[CONFIG_GROUPS_CACHE_KEY]
+
+def get_cached_policy_groups(base_url):
+    """Return cached policy groups for an environment, or None if never refreshed."""
+    profiles = load_profiles()
+    profile = profiles.get(_profile_key(profiles, base_url), {})
+    if POLICY_GROUPS_CACHE_KEY not in profile:
+        return None
+    return profile[POLICY_GROUPS_CACHE_KEY]
+
+def save_config_groups_cache(base_url, groups):
+    profiles = load_profiles()
+    key = _profile_key(profiles, base_url)
+    if key not in profiles:
+        profiles[key] = {}
+    profiles[key][CONFIG_GROUPS_CACHE_KEY] = groups
+    save_profiles(profiles)
+
+def save_policy_groups_cache(base_url, groups):
+    profiles = load_profiles()
+    key = _profile_key(profiles, base_url)
+    if key not in profiles:
+        profiles[key] = {}
+    profiles[key][POLICY_GROUPS_CACHE_KEY] = groups
+    save_profiles(profiles)
+
+def update_profile_tokens(base_url, username, refresh_token):
+    """Persist token rotation without clearing cached group lists."""
+    profiles = load_profiles()
+    key = _profile_key(profiles, base_url)
+    if key not in profiles:
+        profiles[key] = {}
+    profiles[key]["username"] = username
+    profiles[key]["refresh_token"] = refresh_token
+    save_profiles(profiles)
