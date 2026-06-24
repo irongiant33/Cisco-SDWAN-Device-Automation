@@ -5,6 +5,7 @@ import json
 import os
 import cmd
 import shlex
+import glob
 from tabulate import tabulate
 
 from config import get_vmanage_target
@@ -90,7 +91,33 @@ def show_policy_groups(session, base_url):
 
 def load_manifest_csv(csv_path=None):
     if not csv_path:
-        csv_path = input("\n📂 Enter path to your Router Manifest CSV file (e.g., routers.csv): ").strip()
+        csv_files = sorted(glob.glob("*.csv"))
+        if csv_files:
+            print("\n📂 Discovered CSV Manifest Files:")
+            for idx, filename in enumerate(csv_files, 1):
+                print(f" [{idx}] {filename}")
+            
+            while True:
+                choice = input(f"\n👉 Select a CSV file (1-{len(csv_files)}) or enter a file path: ").strip()
+                if not choice:
+                    print("❌ Selection canceled.")
+                    return None, None, None
+                if choice.isdigit():
+                    choice_idx = int(choice) - 1
+                    if 0 <= choice_idx < len(csv_files):
+                        csv_path = csv_files[choice_idx]
+                        break
+                    print(f"⚠️ Invalid entry. Please enter a number between 1 and {len(csv_files)} or type a file path.")
+                else:
+                    csv_path = choice
+                    break
+        else:
+            print("ℹ️ No CSV files found in the local directory.")
+            csv_path = input("📂 Enter path to your Router Manifest CSV file: ").strip()
+            if not csv_path:
+                print("❌ Selection canceled.")
+                return None, None, None
+
     try:
         with open(csv_path, mode='r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
@@ -247,7 +274,7 @@ def test_fetch_expected_variables(session, base_url, csv_path=None, target_input
 
         print(f" [{idx}] {matched_csv_header} - {var} = {formatted_val}")
         
-    print("\n💡 Verify the parameters above. If accurate, proceed to [6] to execute deployment.")
+    print("\n💡 Verify the parameters above. If accurate, proceed to execute deployment.")
 
 def run_config_deployment_pipeline(session, base_url, csv_path=None, group_name=None):
     res = load_manifest_csv(csv_path)

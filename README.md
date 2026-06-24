@@ -1,6 +1,6 @@
 # Cisco Catalyst SD-WAN Configuration Group Automation Engine
 
-This Python-based command-line interface (CLI) automation suite simplifies and speeds up deploying devices to **Configuration Groups** in Cisco Catalyst SD-WAN Manager (formerly vManage), matching the modern UX 2.0 / Release 26.x API specifications. 
+This Python-based command-line interface (CLI) automation suite simplifies and speeds up deploying devices to **Configuration Groups** in Cisco Catalyst SD-WAN Manager (formerly vManage), matching the modern UX 2.0 / Release 26.x API specifications. Alternatively, you can consider the use of this tool: https://github.com/CiscoDevNet/sastre
 
 Instead of configuring devices one by one in a web interface, this tool allows you to bulk-associate and bulk-deploy a matrix of system edge routers using a standard input CSV manifest file.
 
@@ -88,6 +88,10 @@ Alternatively, you can get a CSV by navigating to a configuration group in SD-WA
 2. **Policy Group Associations via CLI**: The CLI does not yet support switching or overriding arbitrary policy group associations outside of the conflict resolution/association prompts.
 
 ---
+
+## TODO
+- [ ] check schema mappings file when auditing variables. Ask if you want to preserve the mapping or change it.
+- [ ] schema mappings should be per CSV per configuration group. Not just per CSV
 
 ## Done
 - [x] add option at the end of the deployment stage to associate & deploy routers to a policy group

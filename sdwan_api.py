@@ -95,17 +95,34 @@ def fetch_devices(session, base_url):
         return res.json().get('data', [])
     raise requests.exceptions.HTTPError(f"HTTP Rejected: {res.status_code}")
 
-def fetch_config_groups(session, base_url):
+def fetch_config_groups(session, base_url, debug=False):
     # https://developer.cisco.com/docs/sd-wan/26-1/get-config-group-by-solution/
     url = f"{base_url}/dataservice/v1/config-group"
-    res = session.get(url, timeout=15)
-    if res.status_code == 200:
-        return res.json().get('data', []) if isinstance(res.json(), dict) else res.json()
-    raise requests.exceptions.HTTPError(f"HTTP Rejected ({res.status_code}): {res.text}")
-
-def get_config_group_id(session, base_url, name):
     try:
-        groups = fetch_config_groups(session, base_url)
+        res = session.get(url, timeout=60)
+        if res.status_code == 200:
+            return res.json().get('data', []) if isinstance(res.json(), dict) else res.json()
+        print(f"❌ Failed to fetch configuration groups (HTTP {res.status_code}).")
+        try:
+            err = res.json()
+            msg = err.get("error", {}).get("message") or err.get("message")
+            details = err.get("error", {}).get("details") or err.get("details")
+            if msg:
+                print(f"   Message: {msg}")
+            if details:
+                print(f"   Details: {details}")
+        except Exception:
+            if res.text:
+                print(f"   Server response: {res.text}")
+    except Exception as e:
+        print(f"❌ Exception while fetching configuration groups: {e}")
+    return []
+
+def get_config_group_id(session, base_url, name, debug=False):
+    try:
+        groups = fetch_config_groups(session, base_url, debug)
+        if(debug):
+            print(f"{groups=}")
         for g in groups:
             if g.get('name') == name or g.get('configGroupName') == name:
                 return g.get('id') or g.get('configGroupId')
